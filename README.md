@@ -55,7 +55,7 @@ Run `cchelp` for the live cheat-sheet.
 | `cclist` | Picker: type to filter · ↑/↓ · Enter resumes · Esc clears/quits (`cclist -l` = plain list) |
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccname` | Print THIS chat's name in the map |
-| `ccplay [game]` | Mini games while something runs (guess/rps/flip/roll/react; no arg = menu) |
+| `ccplay [game]` | Mini games while something runs (guess/rps/flip/roll/react/math/hangman/scramble/8ball; no arg = menu) |
 | `ccfind "<text>"` | Search names **and** notes |
 | `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |

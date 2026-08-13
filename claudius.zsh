@@ -2,7 +2,7 @@
 # Enable by adding to ~/.zshrc:  source ~/.claude/claudius.zsh
 #
 #   ccname                        print THIS chat's name in the map (uses $CLAUDE_CODE_SESSION_ID)
-#   ccplay [game]                 mini games while Claude thinks (no arg = menu; guess/rps/flip/roll/react)
+#   ccplay [game]                 mini games while Claude thinks (no arg = menu; guess/rps/flip/roll/react/math/hangman/scramble/8ball)
 #   cclist                        interactive picker (type to filter, ↑/↓, Enter resumes, Esc clear/quit; -l = plain list)
 #   ccresume "<name>"             resume by name (exact -> case-insensitive -> substring; no arg opens picker)
 #   ccfind "<text>"               search names + notes for a substring
@@ -181,29 +181,85 @@ _ccplay_react() {   # reaction timer
   read -k1 -s; print
   printf '  \e[1m%.0f ms\e[0m\n' $(( (EPOCHREALTIME - t0) * 1000 ))
 }
+_ccplay_math() {    # quick arithmetic quiz
+  local n=5 correct=0 i a b op want ans
+  for (( i=1; i<=n; i++ )); do
+    a=$((RANDOM%12+1)); b=$((RANDOM%12+1))
+    case $((RANDOM%3)) in 0) op='+'; want=$((a+b));; 1) op='-'; want=$((a-b));; 2) op='×'; want=$((a*b));; esac
+    read "ans?  Q$i:  $a $op $b = " || break
+    if [[ "$ans" == "$want" ]]; then printf '  \e[1;32m✓\e[0m\n'; (( correct++ ))
+    else printf '  \e[31m✗  (= %d)\e[0m\n' "$want"; fi
+  done
+  printf '  score: \e[1m%d/%d\e[0m\n' "$correct" "$n"
+}
+_ccplay_hangman() { # guess the word letter by letter
+  local -a words=(claude terminal session resume conversation keyboard function shuffle monkey planet)
+  local word=${words[RANDOM % ${#words} + 1]}
+  local -a revealed; local i; for (( i=1; i<=${#word}; i++ )); do revealed[i]='_'; done
+  local misses=0 max=7 guessed="" g disp hit
+  while (( misses < max )); do
+    disp=""; for (( i=1; i<=${#word}; i++ )); do disp+="${revealed[i]} "; done
+    if [[ "$disp" != *'_'* ]]; then printf '  %s  \e[1;32m🎉\e[0m\n' "$disp"; return 0; fi
+    printf '  %s  \e[2m(misses %d/%d%s)\e[0m\n' "$disp" "$misses" "$max" "${guessed:+; tried: $guessed}"
+    read "g?  letter (q quits): " || break
+    [[ "$g" == (q|Q) ]] && { printf '  it was \e[1m%s\e[0m\n' "$word"; return 0; }
+    g=${g:l}; g=${g[1]}
+    [[ "$g" == [a-z] ]] || { printf '  \e[2m(one letter, please)\e[0m\n'; continue; }
+    [[ "$guessed" == *"$g"* ]] && { printf '  \e[2m(already tried %s)\e[0m\n' "$g"; continue; }
+    guessed+="$g"
+    hit=0; for (( i=1; i<=${#word}; i++ )); do [[ "${word[i]}" == "$g" ]] && { revealed[i]=$g; hit=1; }; done
+    (( hit )) || (( misses++ ))
+  done
+  printf '  \e[31mout of guesses — it was %s\e[0m\n' "$word"
+}
+_ccplay_scramble() {  # unscramble the word
+  local -a words=(puzzle rocket garden pixel coffee guitar planet dragon castle wizard)
+  local word=${words[RANDOM % ${#words} + 1]}
+  local -a chars=(${(s::)word}); local i j tmp
+  for (( i=${#chars}; i>1; i-- )); do j=$(( RANDOM % i + 1 )); tmp=${chars[i]}; chars[i]=${chars[j]}; chars[j]=$tmp; done
+  printf '  unscramble:  \e[1m%s\e[0m\n' "${(j::)chars}"
+  local ans; read "ans?  > " || return 0
+  if [[ "${ans:l}" == "$word" ]]; then printf '  \e[1;32m🎉 correct!\e[0m\n'
+  else printf '  \e[31mnope — it was %s\e[0m\n' "$word"; fi
+}
+_ccplay_8ball() {   # magic 8-ball
+  local -a a=("It is certain." "Without a doubt." "Yes — definitely." "Most likely." "Signs point to yes."
+              "Reply hazy, try again." "Ask again later." "Cannot predict now." "Don't count on it."
+              "My reply is no." "Very doubtful." "Outlook not so good.")
+  local q; read "q?  🎱 ask a yes/no question: " || return 0
+  printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
+}
 ccplay() {   # mini games to pass the time while Claude thinks (no session impact)
-  local -a games=(guess rps flip roll react)
+  local -a games=(guess rps flip roll react math hangman scramble 8ball)
   typeset -A _cc_g_desc _cc_g_instr
   _cc_g_desc=(
-    guess "Hi-Lo — guess a hidden number 1–100"
-    rps   "Rock–paper–scissors vs the computer"
-    flip  "Flip a coin"
-    roll  "Roll two dice"
-    react "Reaction timer — how fast can you hit a key?"
+    guess    "Hi-Lo — guess a hidden number 1–100"
+    rps      "Rock–paper–scissors vs the computer"
+    flip     "Flip a coin"
+    roll     "Roll two dice"
+    react    "Reaction timer — how fast can you hit a key?"
+    math     "Quick arithmetic quiz (5 questions)"
+    hangman  "Guess the word letter by letter"
+    scramble "Unscramble the jumbled word"
+    8ball    "Magic 8-ball — ask a yes/no question"
   )
   _cc_g_instr=(
-    guess "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
-    rps   "Type r, p, or s and Enter. I pick secretly, then we compare."
-    flip  "Just watch — heads or tails."
-    roll  "Just watch — two six-sided dice."
-    react "Press any key to start. When you see GO!, hit any key as fast as you can."
+    guess    "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
+    rps      "Type r, p, or s and Enter. I pick secretly, then we compare."
+    flip     "Just watch — heads or tails."
+    roll     "Just watch — two six-sided dice."
+    react    "Press any key to start. When you see GO!, hit any key as fast as you can."
+    math     "5 questions; type each answer and Enter. I'll score you."
+    hangman  "Guess one letter at a time. 7 misses allowed; q quits."
+    scramble "I show a jumbled word — type the unscrambled word and Enter."
+    8ball    "Type a yes/no question and Enter; the 8-ball answers."
   )
   local g="${1-}"
   if [[ -z $g ]]; then
     printf '\e[1m🎮 Pick a game\e[0m\n'
     local i
     for (( i=1; i<=${#games}; i++ )); do
-      printf '  \e[36m%d\e[0m) \e[1m%-6s\e[0m \e[2m%s\e[0m\n' "$i" "${games[i]}" "${_cc_g_desc[${games[i]}]}"
+      printf '  \e[36m%d\e[0m) \e[1m%-9s\e[0m \e[2m%s\e[0m\n' "$i" "${games[i]}" "${_cc_g_desc[${games[i]}]}"
     done
     local choice; read "choice?  choose 1–${#games} (or name, Enter to cancel): " || return 0
     [[ -z $choice ]] && return 0
