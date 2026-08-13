@@ -1,6 +1,8 @@
-# Claudius — manage Claude Code conversations by name (resume · find · monitor · summarise · export).
-# https://github.com/OWNER/claudius   (commands are cc*-prefixed)
+# Claudius — manage Claude Code conversations by name (reads the session map)
+# Enable by adding to ~/.zshrc:  source ~/.claude/claudius.zsh
+#
 #   ccname                        print THIS chat's name in the map (uses $CLAUDE_CODE_SESSION_ID)
+#   ccplay [game]                 mini games while Claude thinks (no arg = menu; guess/rps/flip/roll/react)
 #   cclist                        interactive picker (type to filter, ↑/↓, Enter resumes, Esc clear/quit; -l = plain list)
 #   ccresume "<name>"             resume by name (exact -> case-insensitive -> substring; no arg opens picker)
 #   ccfind "<text>"               search names + notes for a substring
@@ -8,13 +10,14 @@
 #   ccmonitor [N]                 table of recent chats: tokens (out/ctx), age, status (working/waiting/inactive)
 #   ccfetch "<name>" [extra]      summarise another chat's context (one-shot `claude -p`, reads transcript)
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
+#   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
+#   ccexport "<name>" [out.md]    write a context markdown file (overview/what happened/decisions/refs)
 #   ccnote "<name>" "<notes>"     replace the notes column of an entry
 #   ccadd "<name>" [<id>] [notes] add a row (id defaults to $CLAUDE_CODE_SESSION_ID inside a session)
-#   ccrename "<old>" "<new>"      rename a key (session id preserved)
-#   ccremove [-y] "<name>"        remove a row (confirms; refuses ambiguous)
+#   ccrename "<old>" "<new>"      rename a key (session id preserved; resume trigger follows automatically)
+#   ccremove [-y] "<name>"        remove a row (confirms; refuses ambiguous matches)
 #   cchelp                        show this usage summary
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
-# Map file location (override with CC_MAP): defaults to $CLAUDE_CONFIG_DIR/cc_map.md
 _CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
 
 cchelp() {
@@ -22,6 +25,7 @@ cchelp() {
   print -r -- "  map: $_CC_MAP"
   print
   printf '  \e[36m%-33s\e[0m %s\n' 'ccname'                        'print THIS chat'\''s name in the map'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccplay [game]'                 'mini games while Claude thinks (no arg = menu)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist -l'                     'plain list (name + id)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccresume "<name>"'             'resume by name (exact → case-insensitive → substring)'
@@ -30,6 +34,8 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat'\''s context (claude -p on its transcript)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccexport "<name>" [out.md]'    'write a context markdown file for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccnote "<name>" "<notes>"'     'replace an entry'\''s notes'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccadd "<name>" [id] ["notes"]' 'add a row (id defaults to $CLAUDE_CODE_SESSION_ID)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccrename "<old>" "<new>"'      'rename a key (session id preserved)'
@@ -40,10 +46,11 @@ cchelp() {
   print -r -- $'  \e[2mPickers (cclist, ccimport, any name cmd with no arg): type to filter · ↑/↓ · Esc clears\e[0m'
 }
 
+# Resolve the workspace/cwd a session belongs to (Claude scopes --resume by cwd).
 _cc_cwd_for_id() {
   local id="${1-}" proj cwd f
   local -a matches
-  matches=( "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/"$id.jsonl"(N) )   # search ALL workspaces
+  matches=( "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"/*/"$id.jsonl"(N) )   # search ALL workspaces
   (( ${#matches} == 0 )) && return 1
   f=${matches[1]}
   cwd=$(grep -o '"cwd":"[^"]*"' "$f" 2>/dev/null | head -1 | sed 's/^"cwd":"//; s/"$//')  # authoritative, dash-proof
@@ -135,10 +142,80 @@ _cc_pick() {
 
 cclist() {
   if [[ "${1-}" == "-l" || "${1-}" == "--list" ]]; then _cc_plain; return; fi
-  if [[ ! -t 0 || ! -t 1 ]]; then _cc_plain; return; fi
+  if [[ ! -t 0 || ! -t 1 ]]; then _cc_plain; return; fi   # not a TTY -> plain list
   _CC_PICKED_ID=; _CC_PICKED_NAME=
-  _cc_pick || return 1
+  _cc_pick || return 1                                    # runs in THIS shell, not $(...)
   [[ -n $_CC_PICKED_ID ]] && _cc_launch "$_CC_PICKED_ID"
+}
+
+_ccplay_guess() {   # Hi-Lo number guessing
+  local target=$(( RANDOM % 100 + 1 )) guess tries=0 word
+  while true; do
+    read "guess?  > " || { printf '  it was %d — later!\n' "$target"; return 0; }
+    [[ "$guess" == (q|Q|quit) ]] && { printf '  it was \e[1m%d\e[0m — later!\n' "$target"; return 0; }
+    if [[ "$guess" != <-> ]]; then printf '  \e[2m(numbers only)\e[0m\n'; continue; fi
+    (( tries++ ))
+    if   (( guess < target )); then printf '  \e[33m↑ higher\e[0m\n'
+    elif (( guess > target )); then printf '  \e[36m↓ lower\e[0m\n'
+    else word=tries; (( tries == 1 )) && word=try; printf '  \e[1;32m🎉 %d in %d %s!\e[0m\n' "$target" "$tries" "$word"; return 0; fi
+  done
+}
+_ccplay_rps() {     # rock-paper-scissors
+  local -a o=(rock paper scissors); local you comp res
+  read "you?  r/p/s: " || return 0
+  case ${you:l} in r*) you=rock;; p*) you=paper;; s*) you=scissors;; *) printf '  (didn'\''t get that)\n'; return 0;; esac
+  comp=${o[RANDOM % 3 + 1]}
+  if [[ $you == $comp ]]; then res=$'\e[2mtie\e[0m'
+  elif [[ ($you == rock && $comp == scissors) || ($you == paper && $comp == rock) || ($you == scissors && $comp == paper) ]]; then res=$'\e[1;32myou win 🎉\e[0m'
+  else res=$'\e[31myou lose\e[0m'; fi
+  printf '  you: %s · me: %s → %s\n' "$you" "$comp" "$res"
+}
+_ccplay_flip() { (( RANDOM % 2 )) && printf '  🪙 Heads\n' || printf '  🪙 Tails\n'; }
+_ccplay_roll() { local a=$((RANDOM%6+1)) b=$((RANDOM%6+1)); printf '  🎲 %d + %d = \e[1m%d\e[0m\n' "$a" "$b" "$(( a + b ))"; }
+_ccplay_react() {   # reaction timer
+  zmodload zsh/datetime 2>/dev/null || { printf '  (reaction game needs the zsh/datetime module)\n'; return 1; }
+  print -n -- "  press any key to start…"; read -k1 -s; print
+  sleep $(( (RANDOM % 2500 + 800) / 1000.0 ))
+  local t0=$EPOCHREALTIME
+  printf '  \e[1;32mGO — hit a key!\e[0m '
+  read -k1 -s; print
+  printf '  \e[1m%.0f ms\e[0m\n' $(( (EPOCHREALTIME - t0) * 1000 ))
+}
+ccplay() {   # mini games to pass the time while Claude thinks (no session impact)
+  local -a games=(guess rps flip roll react)
+  typeset -A _cc_g_desc _cc_g_instr
+  _cc_g_desc=(
+    guess "Hi-Lo — guess a hidden number 1–100"
+    rps   "Rock–paper–scissors vs the computer"
+    flip  "Flip a coin"
+    roll  "Roll two dice"
+    react "Reaction timer — how fast can you hit a key?"
+  )
+  _cc_g_instr=(
+    guess "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
+    rps   "Type r, p, or s and Enter. I pick secretly, then we compare."
+    flip  "Just watch — heads or tails."
+    roll  "Just watch — two six-sided dice."
+    react "Press any key to start. When you see GO!, hit any key as fast as you can."
+  )
+  local g="${1-}"
+  if [[ -z $g ]]; then
+    printf '\e[1m🎮 Pick a game\e[0m\n'
+    local i
+    for (( i=1; i<=${#games}; i++ )); do
+      printf '  \e[36m%d\e[0m) \e[1m%-6s\e[0m \e[2m%s\e[0m\n' "$i" "${games[i]}" "${_cc_g_desc[${games[i]}]}"
+    done
+    local choice; read "choice?  choose 1–${#games} (or name, Enter to cancel): " || return 0
+    [[ -z $choice ]] && return 0
+    if [[ "$choice" == <-> ]] && (( choice >= 1 && choice <= ${#games} )); then g=${games[choice]}
+    else g=${choice:l}; fi
+  fi
+  case $g in
+    list|-h|--help|help) printf 'games: %s\n' "${games[*]}"; return 0;;
+  esac
+  if [[ -z ${_cc_g_desc[$g]-} ]]; then printf "unknown game '%s' — try: %s\n" "$g" "${games[*]}"; return 2; fi
+  printf '\e[2m— %s\e[0m\n' "${_cc_g_instr[$g]}"      # instructions before every game
+  _ccplay_$g
 }
 
 ccname() {
@@ -161,11 +238,11 @@ _cc_pick_name() {
 
 ccresume() {
   local q="${1-}" name id match_id match_name
-  [ -z "$q" ] && { cclist; return; }
+  [ -z "$q" ] && { cclist; return; }                      # no arg -> open picker
   while IFS=$'\t' read -r name id; do
     [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }
   done < <(_cc_rows)
-  if [[ -z $match_id ]]; then
+  if [[ -z $match_id ]]; then                             # fall back to substring match
     while IFS=$'\t' read -r name id; do
       [[ "${name:l}" == *"${q:l}"* ]] && { match_id=$id; match_name=$name; break; }
     done < <(_cc_rows)
@@ -254,6 +331,7 @@ ccfetch() {
     claude -p "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
     return
   fi
+  # name mode
   [[ -z $picked ]] && { shift; extra="$*"; }
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" name id match_id match_name
   while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
@@ -483,7 +561,7 @@ ccadd() {
   local name="${1-}" id="${2-}" notes="${3-}"
   [[ -z "$name" ]] && { echo 'usage: ccadd "<name>" [<session-id>] ["<notes>"]'; return 2; }
   [[ "$name" == *'|'* || "$name" == *'`'* ]] && { echo "name cannot contain '|' or a backtick"; return 2; }
-  [[ -z "$id" ]] && id="${CLAUDE_CODE_SESSION_ID-}"
+  [[ -z "$id" ]] && id="${CLAUDE_CODE_SESSION_ID-}"  # inside a session: default to current
   [[ -z "$id" ]] && { echo "no id given and CLAUDE_CODE_SESSION_ID is unset — pass the id, or run inside a session"; return 2; }
   if [[ ! "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
     echo "id doesn't look like a session UUID: $id"; return 2
@@ -557,5 +635,5 @@ if (( $+functions[compdef] )); then
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay
 fi

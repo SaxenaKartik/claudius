@@ -55,6 +55,7 @@ Run `cchelp` for the live cheat-sheet.
 | `cclist` | Picker: type to filter · ↑/↓ · Enter resumes · Esc clears/quits (`cclist -l` = plain list) |
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccname` | Print THIS chat's name in the map |
+| `ccplay [game]` | Mini games while something runs (guess/rps/flip/roll/react; no arg = menu) |
 | `ccfind "<text>"` | Search names **and** notes |
 | `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
@@ -75,7 +76,10 @@ Run `cchelp` for the live cheat-sheet.
 - `/ccadd [name]` — add the current chat to the map
 - `/ccname` — show the current chat's mapped name
 - `/ccspec [path]` · `/ccexport [path]` — write a spec / context file for the current chat
-- `/ccfetch <name>` · `/ccexplain <name>` — summarise / explain another mapped chat inline
+- `/ccfetch <name>` · `/ccexplain <name>` — summarise / explain another mapped chat inline (numbered picker + confirm)
+- `/ccplay [game]` — play a quick game in the chat
+
+> Custom slash commands can't do a live keypress picker (they're prompt files, not app code). They filter **conversationally**: pass a fragment, or pick from a numbered list.
 
 ---
 

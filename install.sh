@@ -28,7 +28,7 @@ CMD_DIR="$CLAUDE_DIR/commands"
 MAP="${CC_MAP:-$CLAUDE_DIR/cc_map.md}"
 RC="${ZDOTDIR:-$HOME}/.zshrc"
 SRC="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-CMDS="ccadd ccname ccfetch ccspec ccexplain ccexport"
+CMDS="ccadd ccname ccfetch ccspec ccexplain ccexport ccplay"
 
 say() { printf '%s\n' "$*"; }
 
