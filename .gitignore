@@ -1,0 +1,8 @@
+# transient
+*.tmp
+*.tmp.*
+.DS_Store
+# local test sandboxes / generated maps
+cc_map.md
+*.spec.md
+*.context.md
