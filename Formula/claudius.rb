@@ -1,10 +1,10 @@
 class Claudius < Formula
   desc "Manage, resume, and summarise Claude Code conversations by name"
-  homepage "https://github.com/OWNER/claudius"
+  homepage "https://github.com/SaxenaKartik/claudius"
   # After you tag a release (e.g. v0.1.0), set url + sha256:
-  #   url "https://github.com/OWNER/claudius/archive/refs/tags/v0.1.0.tar.gz"
+  #   url "https://github.com/SaxenaKartik/claudius/archive/refs/tags/v0.1.0.tar.gz"
   #   sha256 "<run: brew fetch --build-from-source ./Formula/claudius.rb, or shasum -a 256 the tarball>"
-  url "https://github.com/OWNER/claudius/archive/refs/tags/v0.1.0.tar.gz"
+  url "https://github.com/SaxenaKartik/claudius/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "REPLACE_WITH_TARBALL_SHA256"
   license "MIT"
 

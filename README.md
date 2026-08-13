@@ -24,20 +24,20 @@ $ ccname                     # what's THIS chat called in the map?
 
 ### Homebrew (macOS / Linux)
 ```sh
-brew tap OWNER/claudius https://github.com/OWNER/claudius
+brew tap SaxenaKartik/claudius https://github.com/SaxenaKartik/claudius
 brew install claudius
 ```
 Then follow the two `caveats` lines Homebrew prints (source the helper; symlink the slash commands).
 
 ### Curl (macOS / Linux / WSL)
 ```sh
-curl -fsSL https://raw.githubusercontent.com/OWNER/claudius/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/SaxenaKartik/claudius/main/install.sh | sh
 source ~/.zshrc
 ```
 
 ### From a clone
 ```sh
-git clone https://github.com/OWNER/claudius && cd claudius
+git clone https://github.com/SaxenaKartik/claudius && cd claudius
 sh install.sh
 source ~/.zshrc
 ```

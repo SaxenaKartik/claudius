@@ -1,16 +1,16 @@
 #!/bin/sh
 # ============================================================================
 #  Claudius installer — manage Claude Code conversations by name
-#  https://github.com/OWNER/claudius
+#  https://github.com/SaxenaKartik/claudius
 # ----------------------------------------------------------------------------
 #  Works two ways:
 #    • from a clone / tarball:   sh install.sh
-#    • bootstrap over the web:   curl -fsSL https://raw.githubusercontent.com/OWNER/claudius/main/install.sh | sh
+#    • bootstrap over the web:   curl -fsSL https://raw.githubusercontent.com/SaxenaKartik/claudius/main/install.sh | sh
 #
 #  Options (env vars):
 #    CLAUDE_CONFIG_DIR   default: ~/.claude
 #    CC_MAP              default: $CLAUDE_CONFIG_DIR/cc_map.md
-#    CLAUDIUS_REPO       default: OWNER/claudius        (for web bootstrap)
+#    CLAUDIUS_REPO       default: SaxenaKartik/claudius        (for web bootstrap)
 #    CLAUDIUS_REF        default: main
 #
 #  Requires: zsh (the helpers are zsh); Claude Code on PATH as `claude`.
@@ -18,7 +18,7 @@
 # ============================================================================
 set -eu
 
-REPO="${CLAUDIUS_REPO:-OWNER/claudius}"
+REPO="${CLAUDIUS_REPO:-SaxenaKartik/claudius}"
 REF="${CLAUDIUS_REF:-main}"
 RAW="https://raw.githubusercontent.com/$REPO/$REF"
 
