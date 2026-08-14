@@ -52,6 +52,20 @@ Uninstall: `sh install.sh --uninstall` (keeps your map file).
 
 ---
 
+## Getting started
+
+Run **`claudius`** anytime to see this walkthrough in your terminal. The typical first run:
+
+1. **`ccimport`** — name your existing Claude Code sessions in one pass (multi-select picker; type to filter, Space to tick, then give each a name).
+2. **`cclist`** — browse and resume: type to filter, ↑/↓ to move, Enter to resume.
+3. **`ccresume "My Project"`** — jump straight to a specific chat by name (case-insensitive, substring, tab-completes).
+4. **Inside a chat** — `/ccname` tells you what the current chat is mapped as (`/ccadd` names it); `/ccfetch <name>` pulls another mapped chat's context into the one you're in.
+5. **`ccbranch "My Project"`** — fetch a chat's *full* history and start a **new** session from it (the original is untouched).
+
+The map itself is a plain Markdown table at `~/.claude/cc_map.md` (override with `$CC_MAP`) — edit it by hand anytime; every command reads it live.
+
+---
+
 ## Commands
 
 Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the full cheat-sheet.
