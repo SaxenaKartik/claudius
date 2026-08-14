@@ -16,32 +16,72 @@ $ ccfetch  "Backend Changes" # summarise another chat's context (via claude -p)
 $ ccname                     # what's THIS chat called in the map?
 ```
 
-> **zsh only.** The helpers use zsh arrays, `read -k`, glob qualifiers, and
-> `compdef`. On Windows use **WSL + zsh**. Requires Claude Code (`claude` on PATH).
+> **Requires zsh + Claude Code (`claude` on `PATH`).** The helpers use zsh arrays,
+> `read -k`, glob qualifiers, and `compdef`, plus zsh's own `zstat`/`strftime` modules —
+> so they run identically on **macOS, Linux, and Windows (WSL)**. No Bash/PowerShell port.
 
 ---
 
 ## Install
 
-### Homebrew (macOS / Linux)
+Pick your OS below. All three routes install the same thing: a shell helper sourced from
+your `~/.zshrc` and the Claude Code slash commands under `~/.claude/commands/`.
+
+### macOS
+
+zsh is the default shell, so nothing extra to set up.
+
 ```sh
+# Homebrew
 brew tap SaxenaKartik/claudius https://github.com/SaxenaKartik/claudius
 brew trust saxenakartik/claudius     # one-time: recent Homebrew requires trusting third-party taps
 brew install claudius
-```
-Then follow the two `caveats` lines Homebrew prints (source the helper; symlink the slash commands).
+# …then follow the two caveats lines it prints (source the helper; symlink the commands).
 
-> **First-time trust:** recent Homebrew refuses to load formulae from untrusted third-party
-> taps. If `brew install` errors with *"Refusing to load formula … from untrusted tap"*, run
-> `brew trust saxenakartik/claudius` (or the per-formula `brew trust --formula saxenakartik/claudius/claudius`) and re-run install.
-
-### Curl (macOS / Linux / WSL)
-```sh
+# —or— one-line installer
 curl -fsSL https://raw.githubusercontent.com/SaxenaKartik/claudius/main/install.sh | sh
 source ~/.zshrc
 ```
 
-### From a clone
+> **First-time trust:** if `brew install` errors with *"Refusing to load formula … from untrusted tap"*,
+> run `brew trust saxenakartik/claudius` (or `brew trust --formula saxenakartik/claudius/claudius`) and re-run.
+
+### Linux
+
+Install zsh if you don't have it, then use the one-line installer (or Homebrew on Linux):
+
+```sh
+sudo apt install zsh      # Debian/Ubuntu   ·   dnf install zsh (Fedora)   ·   pacman -S zsh (Arch)
+
+curl -fsSL https://raw.githubusercontent.com/SaxenaKartik/claudius/main/install.sh | sh
+source ~/.zshrc
+```
+
+The installer appends `source …/claudius.zsh` to `~/.zshrc`. If zsh isn't your login shell,
+either run `zsh` first, or `chsh -s "$(command -v zsh)"` to make it default. (Homebrew on Linux
+works too — same three `brew` commands as macOS.)
+
+### Windows (WSL)
+
+Claudius is a zsh tool, so run it inside **WSL2**, and run **Claude Code inside the same WSL
+distro** so your sessions live under the Linux `~/.claude`:
+
+```powershell
+wsl --install            # in PowerShell (admin), if you don't have WSL yet — then reboot
+```
+```sh
+# now inside your WSL shell (Ubuntu, etc.)
+sudo apt update && sudo apt install zsh
+curl -fsSL https://raw.githubusercontent.com/SaxenaKartik/claudius/main/install.sh | sh
+source ~/.zshrc
+```
+
+> **Already run Claude Code on Windows natively (PowerShell)?** Its transcripts live at
+> `C:\Users\<you>\.claude`, which WSL sees at `/mnt/c/Users/<you>/.claude`. Point Claudius there:
+> `export CLAUDE_CONFIG_DIR=/mnt/c/Users/<you>/.claude` (add it to `~/.zshrc` before the source line).
+> Git Bash / MSYS won't work — they're Bash, not zsh.
+
+### From a clone (any OS)
 ```sh
 git clone https://github.com/SaxenaKartik/claudius && cd claudius
 sh install.sh

@@ -25,6 +25,21 @@
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
 _CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
 
+# Portable file-time helpers — macOS/BSD `stat -f` and GNU `stat -c` are incompatible,
+# so prefer zsh's own modules (work identically on macOS, Linux, and WSL).
+zmodload -F zsh/stat b:zstat 2>/dev/null   # provides zstat (portable mtime)
+zmodload zsh/datetime 2>/dev/null          # provides strftime / EPOCHSECONDS
+_cc_mtime() {        # epoch mtime of $1 (empty on failure)
+  local -a st
+  if zstat -A st +mtime -- "$1" 2>/dev/null; then print -r -- "$st[1]"; return; fi
+  stat -f %m -- "$1" 2>/dev/null || stat -c %Y -- "$1" 2>/dev/null   # BSD then GNU fallback
+}
+_cc_mtime_fmt() {    # mtime of $1 as "YYYY-mm-dd HH:MM" (empty on failure)
+  local e; e=$(_cc_mtime "$1"); [[ -z $e ]] && return
+  if (( ${+builtins[strftime]} )); then strftime '%Y-%m-%d %H:%M' "$e"
+  else date -r "$e" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$e" '+%Y-%m-%d %H:%M' 2>/dev/null; fi
+}
+
 _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   local c="${1-}"
   case "$c" in
@@ -561,7 +576,7 @@ ccmonitor() {
       local raw=$(grep -oE '"output_tokens":[0-9]+' "$f" 2>/dev/null | grep -oE '[0-9]+' | awk '{s+=$1}END{print s+0}')
       total_tok=$(( total_tok + raw ))
       tok=$(awk -v s="$raw" 'BEGIN{if(s>=1000000)printf "%.1fM",s/1000000;else if(s>=1000)printf "%.0fK",s/1000;else if(s>0)print s;else print "-"}')
-      mt=$(stat -f '%m' "$f" 2>/dev/null)
+      mt=$(_cc_mtime "$f")
       age_s=$(( now - ${mt:-now} ))
       if   (( age_s < 60 ));    then age="${age_s}s"
       elif (( age_s < 3600 ));  then age="$(( age_s / 60 ))m"
@@ -619,7 +634,7 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
     elif [[ ! -s "${cfiles[i]}" ]]; then
       gen+=($i); [[ -t 0 ]] && print -u2 -- "‘${names[i]}’ — not summarised yet, will generate."
     elif [[ -t 0 ]]; then
-      age=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "${cfiles[i]}" 2>/dev/null)
+      age=$(_cc_mtime_fmt "${cfiles[i]}")
       print -u2 -n "‘${names[i]}’ — cached $age.  [u]se / [r]egenerate? "
       read -k 1 ans; print -u2 ""
       [[ "${ans:l}" == r ]] && gen+=($i)
@@ -728,7 +743,7 @@ cccache() {   # manage the ccfetch/ccspec summary cache
         id=${${${f:t}:r}:r}       # abc.fetch.md -> abc
         kind=${${f:t}:r:e}        # abc.fetch.md -> fetch
         nm=$(_cc_rows | awk -F'\t' -v i="$id" '$2==i{print $1}')
-        printf '  %-30s %-7s %s\n' "${nm:-${id:0:8}…}" "$kind" "$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$f" 2>/dev/null)"
+        printf '  %-30s %-7s %s\n' "${nm:-${id:0:8}…}" "$kind" "$(_cc_mtime_fmt "$f")"
       done
       ;;
     --clear|-c)
@@ -867,7 +882,7 @@ _cc_all_sessions() {
     (( ${mapped[(I)$id]} )) && continue    # skip already-mapped
     cwd=$(grep -m1 -oE '"cwd":"[^"]*"' "$f" 2>/dev/null | sed 's/"cwd":"//; s/"$//')
     prev=$(grep -m1 '"type":"user"' "$f" 2>/dev/null | grep -oE '"content":"[^"]*"' | head -1 | sed 's/"content":"//; s/"$//')
-    mt=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$f" 2>/dev/null)
+    mt=$(_cc_mtime_fmt "$f")
     print -r -- "$id	${mt} · ${cwd:t} · ${prev:0:60}"
   done
 }
