@@ -112,6 +112,7 @@ okc "ccfetch multi: Alpha transcript" "$idA.jsonl" "$out"
 okc "ccfetch multi: Beta transcript"  "$idB.jsonl" "$out"
 _cc_all_resolve "Alpha" "Beta"; okrc "_cc_all_resolve all match" 0 $?
 _cc_all_resolve "Alpha" "nope"; okrc "_cc_all_resolve one miss" 1 $?
+_cc_pick_names </dev/null >/dev/null 2>&1; okrc "_cc_pick_names non-TTY -> 2" 2 $?
 # a name + non-name arg stays SINGLE (treated as extra), not multi
 out=$(ccfetch "Alpha" fooextra </dev/null 2>/dev/null); okc "ccfetch single+extra not multi" "fooextra" "$out"
 

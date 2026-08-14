@@ -82,6 +82,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
 | `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
+| `ccfetch` *(no arg)* | Multi-select picker (like `ccimport`): type to filter, **Space** ticks several, **Enter** fetches (Enter on one = single) |
 | `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |

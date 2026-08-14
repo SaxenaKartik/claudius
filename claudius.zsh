@@ -12,6 +12,7 @@
 #   ccmonitor [N]                 table of recent chats: tokens (out/ctx), age, status (working/waiting/inactive)
 #   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
 #   ccfetch "<A>" "<B>" …         fetch MULTIPLE chats at once (per-chat use/regenerate, parallel; offers a new seeded session)
+#   ccfetch                       (no arg) multi-select picker — type to filter, Space ticks several, Enter fetches
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
@@ -319,6 +320,75 @@ _cc_pick_name() {
   _CC_SEL_NAME=$_CC_PICKED_NAME
 }
 
+# Multi-select picker over mapped names (type-to-filter, Space ticks, Enter confirms).
+# On success sets the global array _CC_SEL_NAMES to the chosen names (map order) and returns 0.
+# Returns 2 if not a TTY, 1 if cancelled / nothing chosen.
+_cc_pick_names() {
+  [[ -t 0 && -t 1 ]] || return 2
+  set -A _CC_SEL_NAMES
+  local -a names ids
+  local name id
+  while IFS=$'\t' read -r name id; do names+=("$name"); ids+=("$id"); done < <(_cc_rows)
+  (( ${#names} == 0 )) && { print -u2 "No conversations in the map ($_CC_MAP)."; return 1; }
+  local n=${#names}
+  local -a checked; local i; for (( i=1; i<=n; i++ )); do checked[i]=0; done
+  local filter="" key seq sel=1 drawn=0 cancelled=
+  local -a fidx
+  local _recompute _draw
+  _recompute() {
+    fidx=(); local i lf="${filter:l}"
+    for (( i=1; i<=n; i++ )); do
+      [[ -z $lf || "${names[i]:l}" == *"$lf"* ]] && fidx+=($i)
+    done
+    (( sel < 1 )) && sel=1
+    if (( ${#fidx} == 0 )); then sel=0; elif (( sel > ${#fidx} )); then sel=${#fidx}; fi
+  }
+  _draw() {
+    (( drawn > 0 )) && printf '\e[%dA\r\e[J' "$drawn" >&2
+    printf '\e[1mFetch\e[0m \e[2mfilter:\e[0m %s\e[7m \e[0m \e[2m(type · ↑/↓ · Space tick · Enter · Esc)\e[0m\n' "$filter" >&2
+    local shown=1 j real box
+    if (( ${#fidx} == 0 )); then
+      printf '  \e[2m(no matches)\e[0m\n' >&2; (( shown++ ))
+    else
+      for (( j=1; j<=${#fidx}; j++ )); do
+        real=${fidx[j]}
+        [[ ${checked[real]} == 1 ]] && box='[x]' || box='[ ]'
+        if (( j==sel )); then printf '  \e[7m%s %s\e[0m\n' "$box" "${names[real]}" >&2
+        else printf '  %s \e[36m%s\e[0m\n' "$box" "${names[real]}" >&2; fi
+        (( shown++ ))
+      done
+    fi
+    drawn=$shown
+  }
+  tput civis 2>/dev/null
+  _recompute; _draw
+  while true; do
+    read -rsk1 key
+    case $key in
+      $'\e') seq=''; read -rsk2 -t 0.4 seq 2>/dev/null
+        case $seq in
+          '[A'|'OA') (( sel>1 )) && (( sel-- ));;
+          '[B'|'OB') (( sel<${#fidx} )) && (( sel++ ));;
+          '') if [[ -n $filter ]]; then filter=""; sel=1; _recompute; else cancelled=1; break; fi;;
+        esac;;
+      ' ') (( ${#fidx}>=1 )) && { local r=${fidx[sel]}; checked[r]=$(( 1 - checked[r] )); };;
+      $'\n'|$'\r') break;;
+      $'\x7f'|$'\b') filter="${filter%?}"; sel=1; _recompute;;
+      *) [[ $key == [[:print:]] && $key != ' ' ]] && { filter+="$key"; sel=1; _recompute; };;
+    esac
+    _draw
+  done
+  tput cnorm 2>/dev/null
+  [[ -n $cancelled ]] && { print -u2 "cancelled"; return 1; }
+  # collect ticked names; if none ticked, fall back to the highlighted row
+  for (( i=1; i<=n; i++ )); do [[ ${checked[i]} == 1 ]] && _CC_SEL_NAMES+=("${names[i]}"); done
+  if (( ${#_CC_SEL_NAMES} == 0 )); then
+    (( sel >= 1 && ${#fidx} >= 1 )) && _CC_SEL_NAMES+=("${names[${fidx[sel]}]}")
+  fi
+  (( ${#_CC_SEL_NAMES} == 0 )) && return 1
+  return 0
+}
+
 ccresume() {
   local q="${1-}" name id match_id match_name
   [ -z "$q" ] && { cclist; return; }                      # no arg -> open picker
@@ -507,8 +577,10 @@ ccfetch() {
   fi
   # name mode
   if [[ -z "$q" ]]; then
-    _cc_pick_name; case $? in 2) echo 'usage: ccfetch [-r] "<name>" [extra]  |  ccfetch --file <path.md>'; return 2;; 1) return 1;; esac
-    q=$_CC_SEL_NAME; picked=1
+    # no name given → multi-select picker (Space ticks several; Enter on one = single)
+    _cc_pick_names; case $? in 2) echo 'usage: ccfetch [-r] "<name>" [extra]  |  ccfetch --file <path.md>'; return 2;; 1) return 1;; esac
+    if (( ${#_CC_SEL_NAMES} >= 2 )); then _cc_fetch_many "$refresh" "${_CC_SEL_NAMES[@]}"; return; fi
+    q=${_CC_SEL_NAMES[1]}; picked=1
   fi
   # multi-name mode: 2+ args that ALL resolve to mapped names → parallel multi-fetch
   if [[ -z $picked && $# -ge 2 ]] && _cc_all_resolve "$@"; then
