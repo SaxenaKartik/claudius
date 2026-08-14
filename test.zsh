@@ -107,7 +107,8 @@ out=$(ccfetch "Beta");    okc "ccfetch resolves Beta transcript" "$idB.jsonl" "$
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
-out=$(ccspec "Alpha" "$spec"); okc "ccspec reports written" "Spec written: $spec" "$out"
+out=$(ccspec "Alpha" "$spec"); okc "ccspec prints spec to stdout" "$idA.jsonl" "$out"
+err=$(ccspec "Alpha" "$spec" 2>&1 >/dev/null); okc "ccspec reports written on stderr" "spec written: $spec" "$err"
 okc "spec file invoked claude -p" " -p " "$(cat "$spec")"
 okc "spec references transcript" "$idA.jsonl" "$(cat "$spec")"
 ( cd "$SB"; ccspec "Beta" >/dev/null ); [[ -f "$SB/beta.spec.md" ]]; okrc "ccspec default path -> <slug>.spec.md" 0 $?

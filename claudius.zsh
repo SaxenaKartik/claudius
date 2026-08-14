@@ -515,7 +515,9 @@ ccspec() {
     print -u2 -- $'\e[2m(cached spec — ccspec -r "'"$match_name"$'" to refresh)\e[0m'
     [[ "${tf[1]}" -nt "$cfile" ]] && print -u2 -- $'\e[2m(transcript changed since this spec; -r to refresh)\e[0m'
   fi
-  cp -- "$cfile" "$out" && echo "Spec written: $out" || { echo "failed to write $out"; return 1; }
+  cp -- "$cfile" "$out" || { echo "failed to write $out"; return 1; }
+  print -u2 -- $'\e[2m(spec written: '"$out"$')\e[0m'
+  cat -- "$out"
 }
 
 ccexplain() {
