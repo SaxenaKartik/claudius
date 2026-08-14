@@ -144,7 +144,7 @@ _cc_pick() {
   while true; do
     read -rsk1 key
     case $key in
-      $'\e') read -rsk2 -t 0.4 seq 2>/dev/null
+      $'\e') seq=''; read -rsk2 -t 0.4 seq 2>/dev/null   # reset so a lone Esc isn't mistaken for a stale arrow
         case $seq in
           '[A'|'OA') (( sel > 1 )) && (( sel-- ));;
           '[B'|'OB') (( sel < ${#fidx} )) && (( sel++ ));;
@@ -596,7 +596,7 @@ ccimport() {
   while true; do
     read -rsk1 key
     case $key in
-      $'\e') read -rsk2 -t 0.4 seq 2>/dev/null
+      $'\e') seq=''; read -rsk2 -t 0.4 seq 2>/dev/null   # reset so a lone Esc isn't mistaken for a stale arrow
         case $seq in
           '[A'|'OA') (( sel>1 )) && (( sel-- ));;
           '[B'|'OB') (( sel<${#fidx} )) && (( sel++ ));;
