@@ -104,6 +104,16 @@ out=$(ccfetch "nope");    okc "ccfetch no match" "No session matching 'nope'" "$
 ccfetch >/dev/null 2>&1;  okrc "ccfetch usage exit" 2 $?
 # Beta Prime not renamed yet here (idB), transcript exists -> resolvable
 out=$(ccfetch "Beta");    okc "ccfetch resolves Beta transcript" "$idB.jsonl" "$out"
+# multi-name mode: 2+ names that ALL resolve -> one combined output with per-chat headers
+out=$(ccfetch "Alpha" "Beta" </dev/null 2>/dev/null)
+okc "ccfetch multi: Alpha header"     "# Alpha"    "$out"
+okc "ccfetch multi: Beta header"      "# Beta"     "$out"
+okc "ccfetch multi: Alpha transcript" "$idA.jsonl" "$out"
+okc "ccfetch multi: Beta transcript"  "$idB.jsonl" "$out"
+_cc_all_resolve "Alpha" "Beta"; okrc "_cc_all_resolve all match" 0 $?
+_cc_all_resolve "Alpha" "nope"; okrc "_cc_all_resolve one miss" 1 $?
+# a name + non-name arg stays SINGLE (treated as extra), not multi
+out=$(ccfetch "Alpha" fooextra </dev/null 2>/dev/null); okc "ccfetch single+extra not multi" "fooextra" "$out"
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
@@ -179,6 +189,10 @@ print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexplain.md" ]]; okrc "/ccexplain installed" 0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexport.md" ]];  okrc "/ccexport installed"  0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccname.md" ]];    okrc "/ccname installed"    0 $?
+# installer must bake the real map path in (no {MAPPORT} placeholder left behind)
+okn "/ccfetch MAPPORT substituted" "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccfetch.md")"
+okc "/ccfetch has real map path"   "$CC_MAP"   "$(cat "$CLAUDE_CONFIG_DIR/commands/ccfetch.md")"
+okn "/ccname MAPPORT substituted"  "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccname.md")"
 
 print "===== cchelp ====="
 out=$(cchelp); okc "cchelp shows ccresume" "ccresume" "$out"; okc "cchelp shows map path" "$CC_MAP" "$out"

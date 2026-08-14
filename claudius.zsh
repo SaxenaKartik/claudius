@@ -11,6 +11,7 @@
 #   ccimport                      pick unmapped sessions (multi-select) and name them into the map
 #   ccmonitor [N]                 table of recent chats: tokens (out/ctx), age, status (working/waiting/inactive)
 #   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
+#   ccfetch "<A>" "<B>" …         fetch MULTIPLE chats at once (per-chat use/regenerate, parallel; offers a new seeded session)
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
@@ -55,7 +56,8 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccimport'                      'multi-select unmapped sessions → name them into the map'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat (cached; -r refresh; --file <p>)'
-  printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch summary cache'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<A>" "<B>" …'         'fetch MULTIPLE chats at once (per-chat use/regen, parallel)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch/ccspec summary cache'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexport "<name>" [out.md]'    'write a context markdown file for a chat'
@@ -405,9 +407,84 @@ ccmonitor() {
     "$(( nwork + nwait + ninact ))" "$total_disp"
 }
 
+_cc_all_resolve() {   # returns 0 iff EVERY arg matches a mapped name (exact or substring)
+  local a hit name id
+  for a in "$@"; do
+    hit=
+    while IFS=$'\t' read -r name id; do
+      [[ "${name:l}" == "${a:l}" || "${name:l}" == *"${a:l}"* ]] && { hit=1; break; }
+    done < <(_cc_rows)
+    [[ -z $hit ]] && return 1
+  done
+  return 0
+}
+
+_cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
+  local refresh="${1-}"; shift
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; local cdir="$base/claudius-cache"
+  local qq name id match_id match_name
+  local -a ids names tfs cfiles gen
+  # resolve every name up front (bail if any is unknown / has no transcript)
+  for qq in "$@"; do
+    match_id=; match_name=
+    while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${qq:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    if [[ -z $match_id ]]; then
+      while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${qq:l}"* ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    fi
+    [[ -z $match_id ]] && { echo "No session matching '$qq'. Known:"; _cc_plain; return 1; }
+    local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
+    (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
+    ids+=("$match_id"); names+=("$match_name"); tfs+=("${tf[1]}"); cfiles+=("$cdir/$match_id.fetch.md")
+  done
+  mkdir -p "$cdir"
+  # decide per chat which to (re)generate — prompt only for cached ones, only on a TTY
+  local i ans age
+  for i in {1..${#ids}}; do
+    if [[ "$refresh" == 1 || ! -s "${cfiles[i]}" ]]; then
+      gen+=($i)
+    elif [[ -t 0 ]]; then
+      age=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "${cfiles[i]}" 2>/dev/null)
+      print -u2 -n "‘${names[i]}’ — cached $age.  [u]se / [r]egenerate? "
+      read -k 1 ans; print -u2 ""
+      [[ "${ans:l}" == r ]] && gen+=($i)
+    fi   # non-TTY + cached → silently reuse
+  done
+  # (re)generate the chosen summaries in parallel background jobs
+  if (( ${#gen} )); then
+    print -u2 "Generating ${#gen} summary(ies) in parallel…"
+    local idx
+    for idx in $gen; do
+      ( claude -p "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+    done
+    wait
+  fi
+  # combine (in the order given) and print to stdout
+  local combined=""
+  for i in {1..${#ids}}; do
+    if [[ -s "${cfiles[i]}" ]]; then
+      combined+=$'\n\n# '"${names[i]}"$'\n\n'"$(cat -- "${cfiles[i]}")"
+    else
+      print -u2 -- $'\e[2m(no summary available for '"${names[i]}"$')\e[0m'
+    fi
+  done
+  [[ -z "$combined" ]] && { echo "nothing to show."; return 1; }
+  print -r -- "${combined# }"
+  # terminal mode: offer to open a NEW Claude session seeded with the combined context
+  [[ -t 0 ]] || return 0
+  local yn
+  print -u2 ""
+  print -u2 -n "Start a NEW Claude session seeded with this context? [y/N] "
+  read -k 1 yn; print -u2 ""
+  if [[ "${yn:l}" == y ]]; then
+    print -u2 "Starting a new session with context from ${#ids} chat(s)…"
+    claude "I'm starting a new working session. Below are handoff summaries of prior Claude Code conversations I want to carry context from. Read them, then wait for my next instruction.${combined}"
+  fi
+}
+
 ccfetch() {
   # Usage:
   #   ccfetch "<name>" [extra]           summarise a mapped chat (cached; instant on repeat)
+  #   ccfetch "<A>" "<B>" "<C>"          fetch MULTIPLE chats (per-chat use/regenerate, parallel)
   #   ccfetch -r "<name>"                refresh — regenerate the cached summary
   #   ccfetch --file path.md [extra]     summarise an ARBITRARY file (never cached)
   #   ccfetch @path.md [extra]           shorthand for --file
@@ -429,6 +506,10 @@ ccfetch() {
   if [[ -z "$q" ]]; then
     _cc_pick_name; case $? in 2) echo 'usage: ccfetch [-r] "<name>" [extra]  |  ccfetch --file <path.md>'; return 2;; 1) return 1;; esac
     q=$_CC_SEL_NAME; picked=1
+  fi
+  # multi-name mode: 2+ args that ALL resolve to mapped names → parallel multi-fetch
+  if [[ -z $picked && $# -ge 2 ]] && _cc_all_resolve "$@"; then
+    _cc_fetch_many "$refresh" "$@"; return
   fi
   [[ -z $picked ]] && { shift; extra="$*"; }
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" name id match_id match_name

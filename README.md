@@ -81,6 +81,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
+| `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
 | `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |
@@ -99,7 +100,8 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 - `/ccadd [name]` — add the current chat to the map
 - `/ccname` — show the current chat's mapped name
 - `/ccspec [path]` · `/ccexport [path]` — write a spec / context file for the current chat
-- `/ccfetch <name>` · `/ccexplain <name>` — summarise / explain another mapped chat inline (numbered picker + confirm)
+- `/ccfetch <name(s)>` — pull one **or several** mapped chats' context into the current session (per-chat use-cached / regenerate; regenerated in parallel via subagents)
+- `/ccexplain <name>` — explain another mapped chat inline (numbered picker + confirm)
 - `/ccplay [game]` — play a quick game in the chat
 
 > Custom slash commands can't do a live keypress picker (they're prompt files, not app code). They filter **conversationally**: pass a fragment, or pick from a numbered list.

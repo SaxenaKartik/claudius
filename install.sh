@@ -68,7 +68,13 @@ fetch() {
 
 # --- install helper + commands ---------------------------------------------
 fetch "claudius.zsh" "$HELPER"
-for c in $CMDS; do fetch "commands/$c.md" "$CMD_DIR/$c.md"; done
+for c in $CMDS; do
+  fetch "commands/$c.md" "$CMD_DIR/$c.md"
+  # bake the real map path into the slash command (repo ships a {MAPPORT} placeholder)
+  if grep -q '{MAPPORT}' "$CMD_DIR/$c.md" 2>/dev/null; then
+    sed "s|{MAPPORT}|$MAP|g" "$CMD_DIR/$c.md" > "$CMD_DIR/$c.md.tmp" && mv "$CMD_DIR/$c.md.tmp" "$CMD_DIR/$c.md"
+  fi
+done
 
 # --- starter map (never clobber existing) ----------------------------------
 if [ ! -f "$MAP" ]; then
