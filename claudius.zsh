@@ -420,6 +420,7 @@ _cc_all_resolve() {   # returns 0 iff EVERY arg matches a mapped name (exact or 
 }
 
 _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
+  setopt local_options no_monitor   # background jobs must not print "[5] 46843" notifications
   local refresh="${1-}"; shift
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; local cdir="$base/claudius-cache"
   local qq name id match_id match_name
@@ -437,11 +438,13 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
     ids+=("$match_id"); names+=("$match_name"); tfs+=("${tf[1]}"); cfiles+=("$cdir/$match_id.fetch.md")
   done
   mkdir -p "$cdir"
-  # decide per chat which to (re)generate — prompt only for cached ones, only on a TTY
+  # decide per chat which to (re)generate — announce each; prompt only for cached ones on a TTY
   local i ans age
   for i in {1..${#ids}}; do
-    if [[ "$refresh" == 1 || ! -s "${cfiles[i]}" ]]; then
-      gen+=($i)
+    if [[ "$refresh" == 1 && -s "${cfiles[i]}" ]]; then
+      gen+=($i); [[ -t 0 ]] && print -u2 -- "‘${names[i]}’ — cached, regenerating (-r)."
+    elif [[ ! -s "${cfiles[i]}" ]]; then
+      gen+=($i); [[ -t 0 ]] && print -u2 -- "‘${names[i]}’ — not summarised yet, will generate."
     elif [[ -t 0 ]]; then
       age=$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "${cfiles[i]}" 2>/dev/null)
       print -u2 -n "‘${names[i]}’ — cached $age.  [u]se / [r]egenerate? "
