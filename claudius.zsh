@@ -25,7 +25,101 @@
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
 _CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
 
+_cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
+  local c="${1-}"
+  case "$c" in
+    claudius)  print -r -- 'claudius — print the getting-started walkthrough.
+  Usage: claudius
+  No flags. See cchelp for the full command cheat-sheet.';;
+    cchelp)    print -r -- 'cchelp — print the full command cheat-sheet.
+  Usage: cchelp
+  No flags. Add -h (or --help) to any command for its own detailed help.';;
+    cclist)    print -r -- 'cclist — interactive picker to resume a chat by name.
+  Usage: cclist [-l|--list]
+  Keys: type to filter, up/down to move, Enter resumes, Esc clears then quits.
+  Flags:
+    -l, --list   print a plain list instead of the picker (also used when not a TTY).';;
+    ccresume)  print -r -- 'ccresume — resume a mapped chat by name.
+  Usage: ccresume "<name>"
+  Match: exact (case-insensitive), then substring. With no argument, opens the cclist picker.
+  Resolves the original working directory of the session from its transcript and runs
+  claude --resume there, so it works across workspaces. Names tab-complete.';;
+    ccbranch)  print -r -- 'ccbranch — fork the full history of a chat into a NEW session.
+  Usage: ccbranch "<name>"
+  Runs claude --resume <id> --fork-session; the original conversation is left untouched.
+  With no argument, opens the picker.';;
+    ccfind)    print -r -- 'ccfind — search the map by text.
+  Usage: ccfind "<text>"
+  Case-insensitive substring match over conversation NAMES and NOTES.';;
+    ccmonitor) print -r -- 'ccmonitor — status table of all mapped chats.
+  Usage: ccmonitor
+  Columns: name, output tokens (summed from the transcript), age, and state
+  (working <30s, waiting <5m, inactive). No flags.';;
+    ccfetch)   print -r -- 'ccfetch — summarise the context of another chat (read-only; never resumes it).
+  Usage:
+    ccfetch "<name>" [extra]     summarise one mapped chat (cached; instant on repeat)
+    ccfetch "<A>" "<B>" ...      fetch SEVERAL chats: per-chat use/regenerate, generated in
+                                 parallel, prints the combined context, then offers to open a
+                                 new session seeded with it
+    ccfetch                      no argument: multi-select picker (Space ticks several, Enter fetches)
+    ccfetch --file <path.md>     summarise an arbitrary file instead (shorthand: @path.md)
+  Flags:
+    -r, --refresh                regenerate the cached summary (one chat, or all in multi mode)
+    [extra]                      extra instructions appended to the prompt (single mode; not cached)
+  Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
+    cccache)   print -r -- 'cccache — manage the ccfetch/ccspec summary cache.
+  Usage:
+    cccache [-l|--list]          list cached summaries (TYPE column shows fetch or spec)
+    cccache --clear [name]       clear every cache, or only the chat matching <name>
+  Flags: -l, --list   list (default);   -c, --clear   clear.';;
+    ccspec)    print -r -- 'ccspec — generate a SPEC document from the transcript of a chat.
+  Usage: ccspec [-r] "<name>" [output.md]
+  Writes the spec to <output.md> (default ./<slug>.spec.md) AND prints it.
+  Sections: Goal/Context, Key Decisions, Tasks (checkboxes), Open Questions, References.
+  Cached (instant on repeat) at <config>/claudius-cache/<id>.spec.md.
+  Flags:
+    -r, --refresh   regenerate the cached spec.   With no name, opens the picker.';;
+    ccexplain) print -r -- 'ccexplain — plain-terms Done / Pending / Next for a chat.
+  Usage: ccexplain "<name>" [extra]
+  Prints a short status to stdout (not cached). With no name, opens the picker.';;
+    ccexport)  print -r -- 'ccexport — write a Markdown context export for handoff.
+  Usage: ccexport "<name>" [output.md]
+  Default path ./<slug>.context.md. Sections: Overview, What happened, Decisions,
+  Current state, References. With no name, opens the picker.';;
+    ccnote)    print -r -- 'ccnote — set the notes column for a mapped chat.
+  Usage: ccnote "<name>" "<new notes>"
+  Replaces (does not append) the notes. Refuses ambiguous name matches.';;
+    ccimport)  print -r -- 'ccimport — name your UNMAPPED on-disk sessions into the map.
+  Usage: ccimport
+  Multi-select picker of sessions not yet in the map: type to filter, up/down, Space ticks,
+  Enter confirms, Esc quits. Preview = date, workspace, first user message. Prompts for a
+  name per pick, then adds each with ccadd.';;
+    ccremove)  print -r -- 'ccremove — delete a row from the map.
+  Usage: ccremove [-y] "<name>"
+  Confirms first and refuses ambiguous matches. With no name, opens the picker.
+  Flags:
+    -y   skip the confirmation prompt.';;
+    ccadd)     print -r -- 'ccadd — add a row to the map.
+  Usage: ccadd "<name>" [<session-id>] ["<notes>"]
+  <session-id> defaults to $CLAUDE_CODE_SESSION_ID (the current chat).
+  Refuses duplicate names/ids and malformed UUIDs. A name cannot contain | or a backtick.';;
+    ccrename)  print -r -- 'ccrename — rename a mapped chat (the session id is preserved).
+  Usage: ccrename "<old name>" "<new name>"
+  The resume trigger follows the new name because the map is read live.
+  With no <old name>, opens the picker.';;
+    ccname)    print -r -- 'ccname — print what THIS chat is mapped as.
+  Usage: ccname
+  Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
+    ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
+  Usage: ccplay [game]
+  Games: guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
+  With no argument, shows the menu.';;
+    *)         print -r -- "no help available for '$c'"; return 1;;
+  esac
+}
+
 claudius() {   # getting-started walkthrough
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help claudius; return 0; }
   print -r -- $'\e[1mClaudius\e[0m \e[2m— manage your Claude Code conversations by name\e[0m'
   print -r -- $'\e[2mClaude Code sessions are opaque UUIDs; Claudius maps friendly names to them.\e[0m'
   print
@@ -44,6 +138,7 @@ claudius() {   # getting-started walkthrough
 }
 
 cchelp() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cchelp; return 0; }
   print -r -- $'\e[1mClaudius\e[0m — manage Claude Code conversations by name'
   print -r -- "  map: $_CC_MAP"
   print
@@ -71,6 +166,7 @@ cchelp() {
   print
   print -r -- $'  \e[2mIn a chat: /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport\e[0m'
   print -r -- $'  \e[2mPickers (cclist, ccimport, any name cmd with no arg): type to filter · ↑/↓ · Esc clears\e[0m'
+  print -r -- $'  \e[2mAdd -h or --help to any command for detailed usage and flags.\e[0m'
 }
 
 # Resolve the workspace/cwd a session belongs to (Claude scopes --resume by cwd).
@@ -169,6 +265,7 @@ _cc_pick() {
 }
 
 cclist() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cclist; return 0; }
   if [[ "${1-}" == "-l" || "${1-}" == "--list" ]]; then _cc_plain; return; fi
   if [[ ! -t 0 || ! -t 1 ]]; then _cc_plain; return; fi   # not a TTY -> plain list
   _CC_PICKED_ID=; _CC_PICKED_NAME=
@@ -258,6 +355,7 @@ _ccplay_8ball() {   # magic 8-ball
   printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
 }
 ccplay() {   # mini games to pass the time while Claude thinks (no session impact)
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccplay; return 0; }
   local -a games=(guess rps flip roll react math hangman scramble 8ball)
   typeset -A _cc_g_desc _cc_g_instr
   _cc_g_desc=(
@@ -303,6 +401,7 @@ ccplay() {   # mini games to pass the time while Claude thinks (no session impac
 }
 
 ccname() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccname; return 0; }
   local id="${CLAUDE_CODE_SESSION_ID-}"
   [[ -z "$id" ]] && { echo "not inside a Claude session (CLAUDE_CODE_SESSION_ID unset)"; return 1; }
   local n i
@@ -390,6 +489,7 @@ _cc_pick_names() {
 }
 
 ccresume() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccresume; return 0; }
   local q="${1-}" name id match_id match_name
   [ -z "$q" ] && { cclist; return; }                      # no arg -> open picker
   while IFS=$'\t' read -r name id; do
@@ -406,6 +506,7 @@ ccresume() {
 }
 
 ccbranch() {   # fork a conversation's full history into a NEW session (original untouched)
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccbranch; return 0; }
   local q name id match_id match_name
   if [[ -n "${1-}" ]]; then q="$1"
   else _cc_pick_name; case $? in 2) echo 'usage: ccbranch "<name>"'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; fi
@@ -423,6 +524,7 @@ ccbranch() {   # fork a conversation's full history into a NEW session (original
 }
 
 ccfind() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccfind; return 0; }
   local q="${1-}"
   [ -z "$q" ] && { echo 'usage: ccfind "<text>"'; return 2; }
   local hits
@@ -441,6 +543,7 @@ ccfind() {
 }
 
 ccmonitor() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccmonitor; return 0; }
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   local name id f mt now age age_s tok sstatus stag dot disp limit count=0
   limit="${1:-0}"   # 0 = all mapped
@@ -555,6 +658,7 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
 }
 
 ccfetch() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccfetch; return 0; }
   # Usage:
   #   ccfetch "<name>" [extra]           summarise a mapped chat (cached; instant on repeat)
   #   ccfetch "<A>" "<B>" "<C>"          fetch MULTIPLE chats (per-chat use/regenerate, parallel)
@@ -611,6 +715,7 @@ ccfetch() {
 }
 
 cccache() {   # manage the ccfetch/ccspec summary cache
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cccache; return 0; }
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir
   cdir="$base/claudius-cache"
   case "${1-}" in
@@ -641,6 +746,7 @@ cccache() {   # manage the ccfetch/ccspec summary cache
 }
 
 ccspec() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccspec; return 0; }
   local refresh= q out
   [[ "${1-}" == "-r" || "${1-}" == "--refresh" ]] && { refresh=1; shift; }
   if [[ -n "${1-}" ]]; then q="$1"; out="${2-}"
@@ -677,6 +783,7 @@ ccspec() {
 }
 
 ccexplain() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccexplain; return 0; }
   local q extra=""
   if [[ -n "${1-}" ]]; then q="$1"; shift; extra="$*"
   else _cc_pick_name; case $? in 2) echo 'usage: ccexplain "<name>" [extra]'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; fi
@@ -694,6 +801,7 @@ ccexplain() {
 }
 
 ccexport() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccexport; return 0; }
   local q out
   if [[ -n "${1-}" ]]; then q="$1"; out="${2-}"
   else _cc_pick_name; case $? in 2) echo 'usage: ccexport "<name>" [output.md]'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; out=""; fi
@@ -716,6 +824,7 @@ ccexport() {
 }
 
 ccnote() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccnote; return 0; }
   local q newnotes
   if [[ -n "${1-}" ]]; then
     q="$1"; (( $# < 2 )) && { echo 'usage: ccnote "<name>" "<new notes>"'; return 2; }; newnotes="$2"
@@ -764,6 +873,7 @@ _cc_all_sessions() {
 }
 
 ccimport() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccimport; return 0; }
   local -a ids labels
   local id lbl
   while IFS=$'\t' read -r id lbl; do ids+=("$id"); labels+=("$lbl"); done < <(_cc_all_sessions)
@@ -835,6 +945,7 @@ ccimport() {
 }
 
 ccremove() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccremove; return 0; }
   local assume_yes= q
   [[ "${1-}" == "-y" ]] && { assume_yes=1; shift; }
   if [[ -n "${1-}" ]]; then q="${1-}"
@@ -866,6 +977,7 @@ ccremove() {
 }
 
 ccadd() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccadd; return 0; }
   local name="${1-}" id="${2-}" notes="${3-}"
   [[ -z "$name" ]] && { echo 'usage: ccadd "<name>" [<session-id>] ["<notes>"]'; return 2; }
   [[ "$name" == *'|'* || "$name" == *'`'* ]] && { echo "name cannot contain '|' or a backtick"; return 2; }
@@ -889,6 +1001,7 @@ ccadd() {
 }
 
 ccrename() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccrename; return 0; }
   local old new
   if [[ -n "${1-}" ]]; then
     old="$1"; [[ -z "${2-}" ]] && { echo 'usage: ccrename "<old name>" "<new name>"'; return 2; }; new="$2"

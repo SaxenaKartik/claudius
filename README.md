@@ -68,7 +68,7 @@ The map itself is a plain Markdown table at `~/.claude/cc_map.md` (override with
 
 ## Commands
 
-Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the full cheat-sheet.
+Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the full cheat-sheet. Add **`-h`** or **`--help`** to any command (e.g. `ccfetch --help`) for its detailed usage and flags.
 
 | Command | What it does |
 |---|---|

@@ -183,6 +183,15 @@ out=$(ccnote "Alpha" "has | pipe"); okc "ccnote pipe rejected" "cannot contain '
 ccnote "Alpha" >/dev/null 2>&1; okrc "ccnote usage exit" 2 $?
 n=$(_cc_rows | wc -l | tr -d ' '); ok "count unchanged after ccnote" 4 "$n"
 
+print "===== --help / -h flags ====="
+out=$(ccfetch --help);  okc "ccfetch --help"  "summarise the context of another chat" "$out"
+out=$(ccspec -h);       okc "ccspec -h"        "generate a SPEC document"              "$out"
+out=$(cccache -h);      okc "cccache -h"       "manage the ccfetch/ccspec summary cache" "$out"
+out=$(ccresume --help); okc "ccresume --help"  "resume a mapped chat by name"          "$out"
+out=$(ccadd --help);    okc "ccadd --help"     "add a row to the map"                   "$out"
+ccadd -h >/dev/null 2>&1;  okrc "ccadd -h short-circuits (rc 0, no side effects)" 0 $?
+n=$(_cc_rows | wc -l | tr -d ' '); ok "map unchanged by ccadd -h" 4 "$n"
+
 print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccadd.md" ]];   okrc "/ccadd installed"   0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccfetch.md" ]]; okrc "/ccfetch installed" 0 $?
