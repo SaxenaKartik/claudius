@@ -80,7 +80,8 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccfind "<text>"` | Search names **and** notes |
 | `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
-| `ccfetch "<name>" [extra]` | Summarise another chat's context (`claude -p`); `ccfetch --file x.md` for any file |
+| `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
+| `cccache [--clear [name]]` | List or clear the `ccfetch` summary cache |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |
 | `ccexport "<name>" [out.md]` | Write a context markdown file |

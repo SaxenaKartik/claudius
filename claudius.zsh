@@ -10,7 +10,8 @@
 #   ccfind "<text>"               search names + notes for a substring
 #   ccimport                      pick unmapped sessions (multi-select) and name them into the map
 #   ccmonitor [N]                 table of recent chats: tokens (out/ctx), age, status (working/waiting/inactive)
-#   ccfetch "<name>" [extra]      summarise another chat's context (one-shot `claude -p`, reads transcript)
+#   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
+#   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
 #   ccexport "<name>" [out.md]    write a context markdown file (overview/what happened/decisions/refs)
@@ -53,7 +54,8 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfind "<text>"'               'search names + notes for a substring'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccimport'                      'multi-select unmapped sessions → name them into the map'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
-  printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat'\''s context (claude -p on its transcript)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat (cached; -r refresh; --file <p>)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch summary cache'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexport "<name>" [out.md]'    'write a context markdown file for a chat'
@@ -405,29 +407,29 @@ ccmonitor() {
 
 ccfetch() {
   # Usage:
-  #   ccfetch "<name>" [extra]           summarise a mapped chat via claude -p on its transcript
-  #   ccfetch --file path.md [extra]     summarise an ARBITRARY markdown/text file
+  #   ccfetch "<name>" [extra]           summarise a mapped chat (cached; instant on repeat)
+  #   ccfetch -r "<name>"                refresh — regenerate the cached summary
+  #   ccfetch --file path.md [extra]     summarise an ARBITRARY file (never cached)
   #   ccfetch @path.md [extra]           shorthand for --file
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local q="${1-}" src srcdesc extra="" picked=
-  if [[ -z "$q" ]]; then
-    _cc_pick_name; case $? in 2) echo 'usage: ccfetch "<name>" [extra]  |  ccfetch --file <path.md> [extra]  |  ccfetch @<path.md> [extra]'; return 2;; 1) return 1;; esac
-    q=$_CC_SEL_NAME; picked=1
-  fi
-  if [[ -z $picked && ( "$q" == "--file" || "$q" == "-f" ) ]]; then
-    src="${2-}"; [ -z "$src" ] && { echo "usage: ccfetch --file <path.md> [extra]"; return 2; }
-    shift 2; extra="$*"
-  elif [[ -z $picked && "$q" == @* ]]; then
-    src="${q#@}"; shift; extra="$*"
-  fi
-  if [[ -n $src ]]; then
+  local refresh= q src extra="" picked=
+  [[ "${1-}" == "-r" || "${1-}" == "--refresh" ]] && { refresh=1; shift; }
+  q="${1-}"
+  # --file / @ : arbitrary file, no cache
+  if [[ "$q" == "--file" || "$q" == "-f" || "$q" == @* ]]; then
+    if [[ "$q" == @* ]]; then src="${q#@}"; shift; else src="${2-}"; shift 2 2>/dev/null; fi
+    extra="$*"
+    [ -z "$src" ] && { echo "usage: ccfetch --file <path.md> [extra]"; return 2; }
     [[ -r "$src" ]] || { echo "File not readable: $src"; return 1; }
-    srcdesc="file $src"
-    print -u2 "Summarising $srcdesc…"
+    print -u2 "Summarising file $src…"
     claude -p "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
     return
   fi
   # name mode
+  if [[ -z "$q" ]]; then
+    _cc_pick_name; case $? in 2) echo 'usage: ccfetch [-r] "<name>" [extra]  |  ccfetch --file <path.md>'; return 2;; 1) return 1;; esac
+    q=$_CC_SEL_NAME; picked=1
+  fi
   [[ -z $picked ]] && { shift; extra="$*"; }
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" name id match_id match_name
   while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
@@ -437,8 +439,48 @@ ccfetch() {
   [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
   local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
+  local cdir="$base/claudius-cache"; local cfile="$cdir/$match_id.md"
+  # serve from cache (only the default, no-extra summary is cached)
+  if [[ -z $refresh && -z $extra && -s "$cfile" ]]; then
+    print -u2 -- $'\e[2m(cached — ccfetch -r "'"$match_name"$'" to refresh)\e[0m'
+    [[ "${tf[1]}" -nt "$cfile" ]] && print -u2 -- $'\e[2m(transcript changed since this summary; -r to refresh)\e[0m'
+    cat -- "$cfile"; return 0
+  fi
   print -u2 "Summarising '$match_name' ($match_id)…"
-  claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}"
+  local out
+  out=$(claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
+  [[ -z "$out" ]] && { echo "summary produced no output"; return 1; }
+  [[ -z $extra ]] && { mkdir -p "$cdir"; print -r -- "$out" > "$cfile"; }   # cache the canonical summary
+  print -r -- "$out"
+}
+
+cccache() {   # manage the ccfetch summary cache
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir
+  cdir="$base/claudius-cache"
+  case "${1-}" in
+    ""|-l|--list)
+      local -a files; files=( "$cdir"/*.md(N) )
+      (( ${#files} == 0 )) && { echo "cache is empty ($cdir)"; return 0; }
+      printf '\e[1m%-30s %s\e[0m\n' "CACHED SUMMARY" "GENERATED"
+      local f id nm
+      for f in $files; do
+        id=${${f:t}:r}
+        nm=$(_cc_rows | awk -F'\t' -v i="$id" '$2==i{print $1}')
+        printf '  %-30s %s\n' "${nm:-${id:0:8}…}" "$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$f" 2>/dev/null)"
+      done
+      ;;
+    --clear|-c)
+      if [[ -n "${2-}" ]]; then
+        local name id target=
+        while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${2:l}"* ]] && { target=$id; break; }; done < <(_cc_rows)
+        [[ -z $target ]] && { echo "No mapped chat matching '$2'."; return 1; }
+        rm -f "$cdir/$target.md" && echo "cleared cache for '$2'."
+      else
+        rm -f "$cdir"/*.md(N) 2>/dev/null; echo "cache cleared."
+      fi
+      ;;
+    *) echo "usage: cccache [--list] | cccache --clear [name]"; return 2;;
+  esac
 }
 
 ccspec() {
@@ -731,5 +773,5 @@ if (( $+functions[compdef] )); then
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache
 fi
