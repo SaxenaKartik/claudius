@@ -54,7 +54,7 @@ Uninstall: `sh install.sh --uninstall` (keeps your map file).
 
 ## Commands
 
-Run `cchelp` for the live cheat-sheet.
+Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the full cheat-sheet.
 
 | Command | What it does |
 |---|---|
@@ -75,6 +75,7 @@ Run `cchelp` for the live cheat-sheet.
 | `ccrename "<old>" "<new>"` | Rename a key (session id preserved) |
 | `ccremove [-y] "<name>"` | Remove a row |
 | `cchelp` | Usage cheat-sheet |
+| `claudius` | Getting-started walkthrough |
 
 **Any name-taking command with no argument opens the filter-picker.** Names also
 **tab-complete** (case-insensitive substring).

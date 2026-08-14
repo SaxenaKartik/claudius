@@ -1,4 +1,5 @@
 # Claudius — manage Claude Code conversations by name (reads the session map)
+#   claudius                      getting-started walkthrough
 # Enable by adding to ~/.zshrc:  source ~/.claude/claudius.zsh
 #
 #   ccname                        print THIS chat's name in the map (uses $CLAUDE_CODE_SESSION_ID)
@@ -20,6 +21,24 @@
 #   cchelp                        show this usage summary
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
 _CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
+
+claudius() {   # getting-started walkthrough
+  print -r -- $'\e[1mClaudius\e[0m \e[2m— manage your Claude Code conversations by name\e[0m'
+  print -r -- $'\e[2mClaude Code sessions are opaque UUIDs; Claudius maps friendly names to them.\e[0m'
+  print
+  print -r -- $'\e[1mGetting started\e[0m'
+  printf '  \e[2m1.\e[0m \e[36m%-22s\e[0m %s\n' 'ccimport'              'name your existing sessions in one pass (multi-select)'
+  printf '  \e[2m2.\e[0m \e[36m%-22s\e[0m %s\n' 'cclist'                'browse & resume — type to filter · ↑/↓ · Enter'
+  printf '  \e[2m3.\e[0m \e[36m%-22s\e[0m %s\n' 'ccresume "My Project"' 'resume a specific chat by name'
+  printf '  \e[2m4.\e[0m \e[36m%-22s\e[0m %s\n' '/ccname   (in a chat)' 'what'\''s THIS chat called?   (/ccadd to name it)'
+  printf '     \e[36m%-22s\e[0m %s\n'           '/ccfetch  (in a chat)' 'pull another chat'\''s context into the current one'
+  printf '  \e[2m5.\e[0m \e[36m%-22s\e[0m %s\n' 'ccbranch "My Project"' 'fetch a chat'\''s full context, then start a NEW session'
+  print
+  print -r -- "  map file:      $_CC_MAP"
+  print -r -- $'  all commands:  run \e[36mcchelp\e[0m'
+  print -r -- $'  in a chat:     /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport'
+  print -r -- $'  \e[2mdocs: https://github.com/SaxenaKartik/claudius\e[0m'
+}
 
 cchelp() {
   print -r -- $'\e[1mClaudius\e[0m — manage Claude Code conversations by name'
@@ -43,6 +62,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccrename "<old>" "<new>"'      'rename a key (session id preserved)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccremove [-y] "<name>"'        'remove a row (confirms; refuses ambiguous)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cchelp'                        'show this help'
+  printf '  \e[36m%-33s\e[0m %s\n' 'claudius'                      'getting-started walkthrough'
   print
   print -r -- $'  \e[2mIn a chat: /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport\e[0m'
   print -r -- $'  \e[2mPickers (cclist, ccimport, any name cmd with no arg): type to filter · ↑/↓ · Esc clears\e[0m'
@@ -711,5 +731,5 @@ if (( $+functions[compdef] )); then
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp
 fi
