@@ -439,7 +439,7 @@ ccfetch() {
   [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
   local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
-  local cdir="$base/claudius-cache"; local cfile="$cdir/$match_id.md"
+  local cdir="$base/claudius-cache"; local cfile="$cdir/$match_id.fetch.md"
   # serve from cache (only the default, no-extra summary is cached)
   if [[ -z $refresh && -z $extra && -s "$cfile" ]]; then
     print -u2 -- $'\e[2m(cached — ccfetch -r "'"$match_name"$'" to refresh)\e[0m'
@@ -454,19 +454,20 @@ ccfetch() {
   print -r -- "$out"
 }
 
-cccache() {   # manage the ccfetch summary cache
+cccache() {   # manage the ccfetch/ccspec summary cache
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir
   cdir="$base/claudius-cache"
   case "${1-}" in
     ""|-l|--list)
-      local -a files; files=( "$cdir"/*.md(N) )
+      local -a files; files=( "$cdir"/*.fetch.md(N) "$cdir"/*.spec.md(N) )
       (( ${#files} == 0 )) && { echo "cache is empty ($cdir)"; return 0; }
-      printf '\e[1m%-30s %s\e[0m\n' "CACHED SUMMARY" "GENERATED"
-      local f id nm
+      printf '\e[1m%-30s %-7s %s\e[0m\n' "CACHED CHAT" "TYPE" "GENERATED"
+      local f id kind nm
       for f in $files; do
-        id=${${f:t}:r}
+        id=${${${f:t}:r}:r}       # abc.fetch.md -> abc
+        kind=${${f:t}:r:e}        # abc.fetch.md -> fetch
         nm=$(_cc_rows | awk -F'\t' -v i="$id" '$2==i{print $1}')
-        printf '  %-30s %s\n' "${nm:-${id:0:8}…}" "$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$f" 2>/dev/null)"
+        printf '  %-30s %-7s %s\n' "${nm:-${id:0:8}…}" "$kind" "$(stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$f" 2>/dev/null)"
       done
       ;;
     --clear|-c)
@@ -474,9 +475,9 @@ cccache() {   # manage the ccfetch summary cache
         local name id target=
         while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${2:l}"* ]] && { target=$id; break; }; done < <(_cc_rows)
         [[ -z $target ]] && { echo "No mapped chat matching '$2'."; return 1; }
-        rm -f "$cdir/$target.md" && echo "cleared cache for '$2'."
+        rm -f "$cdir/$target.fetch.md" "$cdir/$target.spec.md" && echo "cleared cache for '$2'."
       else
-        rm -f "$cdir"/*.md(N) 2>/dev/null; echo "cache cleared."
+        rm -f "$cdir"/*.fetch.md(N) "$cdir"/*.spec.md(N) 2>/dev/null; echo "cache cleared."
       fi
       ;;
     *) echo "usage: cccache [--list] | cccache --clear [name]"; return 2;;
@@ -484,9 +485,10 @@ cccache() {   # manage the ccfetch summary cache
 }
 
 ccspec() {
-  local q out
+  local refresh= q out
+  [[ "${1-}" == "-r" || "${1-}" == "--refresh" ]] && { refresh=1; shift; }
   if [[ -n "${1-}" ]]; then q="$1"; out="${2-}"
-  else _cc_pick_name; case $? in 2) echo 'usage: ccspec "<name>" [output.md]'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; out=""; fi
+  else _cc_pick_name; case $? in 2) echo 'usage: ccspec [-r] "<name>" [output.md]'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; out=""; fi
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   local name id match_id match_name
   while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
@@ -496,14 +498,24 @@ ccspec() {
   [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
   local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
-  command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   if [[ -z "$out" ]]; then
     local slug; slug=$(print -r -- "${match_name:l}" | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//')
     out="./${slug}.spec.md"
   fi
-  print -u2 "Writing spec for '$match_name' -> $out …"
-  claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
-  [[ -s "$out" ]] && echo "Spec written: $out" || { echo "spec generation produced no output"; rm -f "$out"; return 1; }
+  local cdir="$base/claudius-cache"; local cfile="$cdir/$match_id.spec.md"
+  # (re)generate into cache unless a fresh cached spec exists
+  if [[ -n $refresh || ! -s "$cfile" ]]; then
+    command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
+    print -u2 "Generating spec for '$match_name' ($match_id)…"
+    local gen
+    gen=$(claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
+    [[ -z "$gen" ]] && { echo "spec generation produced no output"; return 1; }
+    mkdir -p "$cdir"; print -r -- "$gen" > "$cfile"
+  else
+    print -u2 -- $'\e[2m(cached spec — ccspec -r "'"$match_name"$'" to refresh)\e[0m'
+    [[ "${tf[1]}" -nt "$cfile" ]] && print -u2 -- $'\e[2m(transcript changed since this spec; -r to refresh)\e[0m'
+  fi
+  cp -- "$cfile" "$out" && echo "Spec written: $out" || { echo "failed to write $out"; return 1; }
 }
 
 ccexplain() {

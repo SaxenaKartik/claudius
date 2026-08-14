@@ -81,8 +81,8 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
-| `cccache [--clear [name]]` | List or clear the `ccfetch` summary cache |
-| `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) |
+| `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
+| `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |
 | `ccexport "<name>" [out.md]` | Write a context markdown file |
 | `ccadd "<name>" [id] ["notes"]` | Add a row (id defaults to the current session) |
