@@ -54,6 +54,7 @@ Run `cchelp` for the live cheat-sheet.
 |---|---|
 | `cclist` | Picker: type to filter · ↑/↓ · Enter resumes · Esc clears/quits (`cclist -l` = plain list) |
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
+| `ccbranch "<name>"` | Fork a chat's full history into a **new** session (original untouched) |
 | `ccname` | Print THIS chat's name in the map |
 | `ccplay [game]` | Mini games while something runs (guess/rps/flip/roll/react/math/hangman/scramble/8ball; no arg = menu) |
 | `ccfind "<text>"` | Search names **and** notes |

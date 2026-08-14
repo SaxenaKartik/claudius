@@ -5,6 +5,7 @@
 #   ccplay [game]                 mini games while Claude thinks (no arg = menu; guess/rps/flip/roll/react/math/hangman/scramble/8ball)
 #   cclist                        interactive picker (type to filter, ↑/↓, Enter resumes, Esc clear/quit; -l = plain list)
 #   ccresume "<name>"             resume by name (exact -> case-insensitive -> substring; no arg opens picker)
+#   ccbranch "<name>"             fork a chat's full history into a NEW session (original untouched)
 #   ccfind "<text>"               search names + notes for a substring
 #   ccimport                      pick unmapped sessions (multi-select) and name them into the map
 #   ccmonitor [N]                 table of recent chats: tokens (out/ctx), age, status (working/waiting/inactive)
@@ -29,6 +30,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist -l'                     'plain list (name + id)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccresume "<name>"'             'resume by name (exact → case-insensitive → substring)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccbranch "<name>"'             'fork a chat'\''s full history into a NEW session'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfind "<text>"'               'search names + notes for a substring'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccimport'                      'multi-select unmapped sessions → name them into the map'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
@@ -62,13 +64,14 @@ _cc_cwd_for_id() {
 }
 
 _cc_launch() {
-  local id="${1-}" cwd
-  cwd=$(_cc_cwd_for_id "$id")
+  local id="${1-}"; shift 2>/dev/null || true
+  local -a extra=("$@")            # optional extra flags (e.g. --fork-session)
+  local cwd; cwd=$(_cc_cwd_for_id "$id")
   if [[ -n $cwd && $cwd != $PWD ]]; then
-    echo "(cd $cwd) claude --resume $id"
-    (cd "$cwd" && claude --resume "$id")
+    echo "(cd $cwd) claude --resume $id ${extra[*]}"
+    (cd "$cwd" && claude --resume "$id" "${extra[@]}")
   else
-    claude --resume "$id"
+    claude --resume "$id" "${extra[@]}"
   fi
 }
 
@@ -306,6 +309,23 @@ ccresume() {
   [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
   echo "Resuming '$match_name' -> $match_id"
   _cc_launch "$match_id"
+}
+
+ccbranch() {   # fork a conversation's full history into a NEW session (original untouched)
+  local q name id match_id match_name
+  if [[ -n "${1-}" ]]; then q="$1"
+  else _cc_pick_name; case $? in 2) echo 'usage: ccbranch "<name>"'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; fi
+  while IFS=$'\t' read -r name id; do
+    [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }
+  done < <(_cc_rows)
+  if [[ -z $match_id ]]; then
+    while IFS=$'\t' read -r name id; do
+      [[ "${name:l}" == *"${q:l}"* ]] && { match_id=$id; match_name=$name; break; }
+    done < <(_cc_rows)
+  fi
+  [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
+  echo "Branching '$match_name' → new session forked from $match_id (original untouched)"
+  _cc_launch "$match_id" --fork-session
 }
 
 ccfind() {
@@ -690,6 +710,6 @@ if (( $+functions[compdef] )); then
     compadd -U -a matched
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
-  compdef _cc_complete_names ccresume ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
+  compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
   compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay
 fi
