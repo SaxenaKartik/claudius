@@ -10,6 +10,7 @@ hunting for hex ids.
 ```
 $ cclist                     # arrow-key picker (type to filter) → resume
 $ ccresume "Backend Changes" # resume by name (case-insensitive, substring, tab-complete)
+$ ccbranch "Backend Changes" # fork the chat's full history into a NEW session
 $ ccmonitor                  # table of chats: tokens, age, working/waiting/inactive
 $ ccfetch  "Backend Changes" # summarise another chat's context (via claude -p)
 $ ccname                     # what's THIS chat called in the map?
