@@ -25,9 +25,14 @@ $ ccname                     # what's THIS chat called in the map?
 ### Homebrew (macOS / Linux)
 ```sh
 brew tap SaxenaKartik/claudius https://github.com/SaxenaKartik/claudius
+brew trust saxenakartik/claudius     # one-time: recent Homebrew requires trusting third-party taps
 brew install claudius
 ```
 Then follow the two `caveats` lines Homebrew prints (source the helper; symlink the slash commands).
+
+> **First-time trust:** recent Homebrew refuses to load formulae from untrusted third-party
+> taps. If `brew install` errors with *"Refusing to load formula … from untrusted tap"*, run
+> `brew trust saxenakartik/claudius` (or the per-formula `brew trust --formula saxenakartik/claudius/claudius`) and re-run install.
 
 ### Curl (macOS / Linux / WSL)
 ```sh
