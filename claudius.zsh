@@ -3,7 +3,7 @@
 # Enable by adding to ~/.zshrc:  source ~/.claude/claudius.zsh
 #
 #   ccname                        print THIS chat's name in the map (uses $CLAUDE_CODE_SESSION_ID)
-#   ccplay [game]                 mini games while Claude thinks (no arg = menu; guess/rps/flip/roll/react/math/hangman/scramble/8ball)
+#   ccplay [game]                 mini games while Claude thinks (no arg = menu; wordle/guess/rps/flip/roll/react/math/hangman/scramble/8ball)
 #   cclist                        interactive picker (type to filter, ↑/↓, Enter resumes, Esc clear/quit; -l = plain list)
 #   ccresume "<name>"             resume by name (exact -> case-insensitive -> substring; no arg opens picker)
 #   ccbranch "<name>"             fork a chat's full history into a NEW session (original untouched)
@@ -127,7 +127,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
     ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
   Usage: ccplay [game]
-  Games: guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
+  Games: wordle, guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
   With no argument, shows the menu.';;
     *)         print -r -- "no help available for '$c'"; return 1;;
   esac
@@ -369,11 +369,51 @@ _ccplay_8ball() {   # magic 8-ball
   local q; read "q?  🎱 ask a yes/no question: " || return 0
   printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
 }
+_ccplay_wordle() {  # Wordle — guess a 5-letter word in 6 tries, colored tile feedback
+  local -a words=(crane slate plumb ghost mirth blaze cider fjord query vivid
+         mango pluck zebra ivory nudge frost gleam brisk chalk dwarf
+         epoxy flick gruel hoist jolly knelt lyric mound noble ocean
+         pride quilt raven shine trove usher wharf yacht amber blush)
+  local word=${words[RANDOM % ${#words} + 1]}
+  local max=6 n=0 guess i
+  printf '  \e[2mGuess the 5-letter word — %d tries.  \e[42;30m G \e[0;2m=right spot  \e[43;30m Y \e[0;2m=wrong spot  \e[100;97m X \e[0;2m=not in word.  (q quits)\e[0m\n' "$max"
+  while (( n < max )); do
+    read "guess?  [$((n+1))/$max] > " || { printf '  the word was \e[1m%s\e[0m\n' "$word"; return 0; }
+    guess=${guess:l}
+    [[ "$guess" == (q|Q|quit) ]] && { printf '  the word was \e[1m%s\e[0m\n' "$word"; return 0; }
+    if [[ "$guess" != [a-z][a-z][a-z][a-z][a-z] ]]; then printf '  \e[2m(type exactly 5 letters, a–z)\e[0m\n'; continue; fi
+    local -a tgt=(${(s::)word}) gss=(${(s::)guess}) mark
+    local -A avail; for i in {1..5}; do avail[${tgt[i]}]=$(( ${avail[${tgt[i]}]:-0} + 1 )); done
+    for i in {1..5}; do                                   # pass 1: greens (exact position)
+      if [[ ${gss[i]} == ${tgt[i]} ]]; then mark[i]=G; avail[${gss[i]}]=$(( avail[${gss[i]}] - 1 )); else mark[i]=.; fi
+    done
+    for i in {1..5}; do                                   # pass 2: yellows (present) vs grays
+      [[ ${mark[i]} == G ]] && continue
+      if (( ${avail[${gss[i]}]:-0} > 0 )); then mark[i]=Y; avail[${gss[i]}]=$(( avail[${gss[i]}] - 1 )); else mark[i]=X; fi
+    done
+    local row="" ch
+    for i in {1..5}; do
+      ch=${(U)gss[i]}
+      case ${mark[i]} in
+        G) row+=$'\e[42;30m '"$ch"$' \e[0m';;
+        Y) row+=$'\e[43;30m '"$ch"$' \e[0m';;
+        X) row+=$'\e[100;97m '"$ch"$' \e[0m';;
+      esac
+    done
+    (( n++ )); printf '  %s\n' "$row"
+    if [[ "$guess" == "$word" ]]; then
+      local plural=tries; (( n == 1 )) && plural=try
+      printf '  \e[1;32m🎉 solved in %d %s!\e[0m\n' "$n" "$plural"; return 0
+    fi
+  done
+  printf '  \e[31mout of tries — it was \e[1m%s\e[0m\e[0m\n' "$word"
+}
 ccplay() {   # mini games to pass the time while Claude thinks (no session impact)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccplay; return 0; }
-  local -a games=(guess rps flip roll react math hangman scramble 8ball)
+  local -a games=(wordle guess rps flip roll react math hangman scramble 8ball)
   typeset -A _cc_g_desc _cc_g_instr
   _cc_g_desc=(
+    wordle   "Wordle — guess a 5-letter word in 6 tries (colored tiles)"
     guess    "Hi-Lo — guess a hidden number 1–100"
     rps      "Rock–paper–scissors vs the computer"
     flip     "Flip a coin"
@@ -385,6 +425,7 @@ ccplay() {   # mini games to pass the time while Claude thinks (no session impac
     8ball    "Magic 8-ball — ask a yes/no question"
   )
   _cc_g_instr=(
+    wordle   "Guess a 5-letter word in 6 tries. After each guess: green=right spot, yellow=in word/wrong spot, gray=absent. q quits."
     guess    "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
     rps      "Type r, p, or s and Enter. I pick secretly, then we compare."
     flip     "Just watch — heads or tails."

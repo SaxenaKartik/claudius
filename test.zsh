@@ -192,6 +192,12 @@ out=$(ccadd --help);    okc "ccadd --help"     "add a row to the map"           
 ccadd -h >/dev/null 2>&1;  okrc "ccadd -h short-circuits (rc 0, no side effects)" 0 $?
 n=$(_cc_rows | wc -l | tr -d ' '); ok "map unchanged by ccadd -h" 4 "$n"
 
+print "===== ccplay wordle ====="
+out=$(ccplay list);                      okc "wordle in games list" "wordle" "$out"
+out=$(printf 'q\n' | ccplay wordle 2>&1); okc "wordle reveals word on quit" "the word was" "$out"
+out=$(printf 'abcde\nq\n' | ccplay wordle 2>&1); okc "wordle scores a 5-letter guess (tile)" $'\e[' "$out"
+out=$(ccplay nope 2>&1);                 okc "unknown game rejected" "unknown game" "$out"
+
 print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccadd.md" ]];   okrc "/ccadd installed"   0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccfetch.md" ]]; okrc "/ccfetch installed" 0 $?

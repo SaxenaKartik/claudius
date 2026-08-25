@@ -1,6 +1,6 @@
 ---
 description: Play a quick game in this chat (menu of games)
-argument-hint: [guess|rps|flip|roll|math|hangman|scramble|8ball]
+argument-hint: [wordle|guess|rps|flip|roll|math|hangman|scramble|8ball]
 ---
 Play a quick, light game with me right here in the chat — a break while something else runs.
 
@@ -10,18 +10,20 @@ Note: this runs in the current conversation, so it DOES use this chat's context/
 
 ```
 🎮 Pick a game
-  1) guess    — Hi-Lo: guess a hidden number 1–100
-  2) rps      — Rock–paper–scissors
-  3) flip     — Coin flip
-  4) roll     — Roll two dice
-  5) math     — Quick arithmetic quiz (5 questions)
-  6) hangman  — Guess the word letter by letter
-  7) scramble — Unscramble a jumbled word
-  8) 8ball    — Ask a yes/no question
+  1) wordle   — Guess a 5-letter word in 6 tries (🟩🟨⬛ feedback)
+  2) guess    — Hi-Lo: guess a hidden number 1–100
+  3) rps      — Rock–paper–scissors
+  4) flip     — Coin flip
+  5) roll     — Roll two dice
+  6) math     — Quick arithmetic quiz (5 questions)
+  7) hangman  — Guess the word letter by letter
+  8) scramble — Unscramble a jumbled word
+  9) 8ball    — Ask a yes/no question
 ```
 
 **Once a game is chosen** (from the menu or from `$ARGUMENTS`), first print its one-line instructions, then start:
 
+- **wordle** — "Guess a 5-letter word in 6 tries; I'll mark each letter 🟩 right spot / 🟨 in word, wrong spot / ⬛ not in word." Pick a secret common 5-letter word and keep it hidden in your reasoning. For each guess: reject anything that isn't 5 letters; otherwise render one row of 5 emoji tiles (🟩/🟨/⬛) followed by the guess in caps, using correct duplicate-letter rules (mark greens first, then yellows only while unused copies of that letter remain, else ⬛). Show all past rows each turn. Win on an exact match (celebrate with the try count); after 6 wrong guesses, reveal the word. Never reveal it early.
 - **guess** — "I've picked a number 1–100; guess and I'll say higher/lower." Pick a secret whole number, keep it hidden in your reasoning, respond only higher/lower to each guess, count tries, celebrate on success. Never reveal it early.
 - **rps** — "Type rock/paper/scissors (r/p/s)." You choose secretly (vary it), announce both picks and the winner.
 - **flip** — "Heads or tails?" Then flip and report.
