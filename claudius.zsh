@@ -782,7 +782,7 @@ _cc_transcript_text() {   # $1=id $2=jsonl -> ensures a compact text extract exi
   local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
   local out="$cdir/$id.text.md"
   mkdir -p "$cdir"
-  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]]; then
+  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'kirous-extract v2'; then
     command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
     python3 - "$jsonl" "$out" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
 import sys, json
@@ -800,9 +800,10 @@ def render(c):
             r = b.get("content", "")
             if isinstance(r, list): r = " ".join(x.get("text","") for x in r if isinstance(x, dict))
             r = str(r).strip()
-            if r: parts.append(f"[tool result: {r[:600]}]")
+            if r: parts.append(f"[tool result: {r[:1500]}]")
     return "\n".join(p for p in parts if p)
 with open(src) as f, open(dst, "w") as w:
+    w.write("<!-- kirous-extract v2 -->\n")
     for line in f:
         try: o = json.loads(line)
         except Exception: continue
@@ -872,7 +873,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     print -u2 -- $'\e[2mPreparing '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
     local i; local -a textfiles
     for i in {1..${#_CC_RM_TFS}}; do textfiles+=("$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")"); done
-    prompt="Read the following Claude Code conversation transcript file(s) — they are cleaned text extracts (## USER / ## ASSISTANT turns). Use your file-reading/grep tools to find the relevant turns, then answer the question strictly and specifically from their content — include concrete details, numbers, formulas, file/CR/ticket identifiers when present. If the transcripts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
+    prompt="Read the following Claude Code conversation transcript file(s) — cleaned text extracts (## USER / ## ASSISTANT turns). SEARCH THEM THOROUGHLY before answering: grep not just the literal wording of the question but ALSO the technical terms the answer would be recorded under — function/method names, field names, formulas, specific numbers, file paths, CR/ticket ids — and read enough surrounding turns to be complete. Prefer concrete specifics (exact formulas, numbers, code line references) over vague description; if a formula or value exists in the transcript, quote it. Answer strictly from the transcript content. Only after a genuine, multi-term search, if the answer is truly absent, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
     for i in {1..${#textfiles}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${textfiles[i]}"$'\n'; done
   fi
   out=$(_cc_claude_spin "$prompt")
