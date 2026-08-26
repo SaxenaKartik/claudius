@@ -381,19 +381,42 @@ _ccplay_8ball() {   # magic 8-ball
   local q; read "q?  🎱 ask a yes/no question: " || return 0
   printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
 }
-_ccplay_wordle() {  # Wordle — guess a 5-letter word in 6 tries, colored tile feedback
+_ccplay_wordle_kb() {   # draw the QWERTY letter-tracker (reads assoc array `kb` via zsh dynamic scope)
+  local -a rows=(qwertyuiop asdfghjkl zxcvbnm) indent=('' ' ' '   ')
+  local i c ch out
+  for (( i=1; i<=3; i++ )); do
+    out="  ${indent[i]}"
+    for c in ${(s::)rows[i]}; do
+      ch=${(U)c}
+      case ${kb[$c]-} in
+        G) out+=$'\e[42;30m'"$ch"$'\e[0m ';;   # right spot
+        Y) out+=$'\e[43;30m'"$ch"$'\e[0m ';;   # in word
+        X) out+=$'\e[90m'"$ch"$'\e[0m ';;      # used, not in word (dark)
+        *) out+=$'\e[1m'"$ch"$'\e[0m ';;       # unused
+      esac
+    done
+    print -u2 -- "$out"
+  done
+}
+_ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-letter keyboard, dictionary-checked
   local -a words=(crane slate plumb ghost mirth blaze cider fjord query vivid
          mango pluck zebra ivory nudge frost gleam brisk chalk dwarf
          epoxy flick gruel hoist jolly knelt lyric mound noble ocean
          pride quilt raven shine trove usher wharf yacht amber blush)
   local word=${words[RANDOM % ${#words} + 1]}
+  local dict=; local d; for d in /usr/share/dict/words /usr/dict/words; do [[ -r $d ]] && { dict=$d; break; }; done
   local max=6 n=0 guess i
-  printf '  \e[2mGuess the 5-letter word — %d tries.  \e[42;30m G \e[0;2m=right spot  \e[43;30m Y \e[0;2m=wrong spot  \e[100;97m X \e[0;2m=not in word.  (q quits)\e[0m\n' "$max"
+  local -A kb rank=(G 3 Y 2 X 1)
+  printf '  \e[2mGuess the 5-letter word — %d tries.  \e[42;30m G \e[0;2m=right spot  \e[43;30m Y \e[0;2m=wrong spot  \e[90mX\e[0;2m=not in word.  (q quits)\e[0m\n' "$max"
+  _ccplay_wordle_kb
   while (( n < max )); do
     read "guess?  [$((n+1))/$max] > " || { printf '  the word was \e[1m%s\e[0m\n' "$word"; return 0; }
     guess=${guess:l}
     [[ "$guess" == (q|Q|quit) ]] && { printf '  the word was \e[1m%s\e[0m\n' "$word"; return 0; }
     if [[ "$guess" != [a-z][a-z][a-z][a-z][a-z] ]]; then printf '  \e[2m(type exactly 5 letters, a–z)\e[0m\n'; continue; fi
+    if [[ -n $dict && "$guess" != "$word" ]] && ! LC_ALL=C grep -qix -- "$guess" "$dict"; then
+      printf '  \e[2m(“%s” is not in the word list — try a real word)\e[0m\n' "$guess"; continue
+    fi
     local -a tgt=(${(s::)word}) gss=(${(s::)guess}) mark
     local -A avail; for i in {1..5}; do avail[${tgt[i]}]=$(( ${avail[${tgt[i]}]:-0} + 1 )); done
     for i in {1..5}; do                                   # pass 1: greens (exact position)
@@ -411,8 +434,10 @@ _ccplay_wordle() {  # Wordle — guess a 5-letter word in 6 tries, colored tile 
         Y) row+=$'\e[43;30m '"$ch"$' \e[0m';;
         X) row+=$'\e[100;97m '"$ch"$' \e[0m';;
       esac
+      (( ${rank[${mark[i]}]:-0} > ${rank[${kb[${gss[i]}]:-}]:-0} )) && kb[${gss[i]}]=${mark[i]}  # keyboard: keep best
     done
     (( n++ )); printf '  %s\n' "$row"
+    _ccplay_wordle_kb
     if [[ "$guess" == "$word" ]]; then
       local plural=tries; (( n == 1 )) && plural=try
       printf '  \e[1;32m🎉 solved in %d %s!\e[0m\n' "$n" "$plural"; return 0
