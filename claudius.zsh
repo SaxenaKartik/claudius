@@ -818,6 +818,43 @@ PY
   print -r -- "$out"
 }
 
+_cc_ask_excerpts() {   # $1=question $2=budgetChars ; rest = "name<TAB>file" -> prints the most relevant turns
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 - "$@" <<'PY' 2>/dev/null
+import sys, re
+q = sys.argv[1]; budget = int(sys.argv[2]); pairs = sys.argv[3:]
+STOP = set("the a an of in to for and or how does do is are was were be it its this that these those with on at by from as what which when where why who whom about into your my our their has have can could would should will".split())
+terms = [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 3 and w not in STOP]
+terms = list(dict.fromkeys(terms)) or [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 2]
+blocks = []; order = 0
+for pair in pairs:
+    if "\t" not in pair: continue
+    name, path = pair.split("\t", 1)
+    try: data = open(path, encoding="utf-8", errors="ignore").read()
+    except Exception: continue
+    parts = re.split(r"(?m)^(## (?:USER|ASSISTANT))\s*$", data)
+    i = 1
+    while i < len(parts):
+        text = (parts[i] + "\n" + (parts[i+1] if i+1 < len(parts) else "")).strip()
+        i += 2; order += 1
+        low = text.lower()
+        distinct = sum(1 for t in terms if t in low)
+        if distinct:
+            blocks.append((distinct, sum(low.count(t) for t in terms), order, name, text))
+blocks.sort(key=lambda b: (b[0], b[1]), reverse=True)
+sel = []; used = 0
+for b in blocks:
+    if used + len(b[4]) > budget and sel: break
+    sel.append(b); used += len(b[4])
+sel.sort(key=lambda b: (b[3], b[2]))
+out = []; cur = None
+for _, _, _, name, text in sel:
+    if name != cur: out.append(f"\n### From chat: {name}\n"); cur = name
+    out.append(text)
+print("\n\n".join(out))
+PY
+}
+
 _cc_claude_spin() {   # run claude -p "$1" with a live spinner on stderr; echo the answer to stdout
   local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
   claude -p "$prompt" > "$tmp" 2>/dev/null &
@@ -867,14 +904,23 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     print -u2 -- $'\e[2mAsking (summaries): '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
     prompt="Answer the question using ONLY the conversation summaries below. If they lack the detail to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing (suggest dropping -s so I read the full transcripts, or -r to refresh). Never invent details."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
   else
-    # default: read the conversation transcript(s) — but a compact TEXT extract, not the raw
-    # multi-MB JSONL (which is ~97% tool/metadata noise and painfully slow to read).
+    # default: extract compact text, RETRIEVE the relevant turns locally (cheap grep/rank), then
+    # send claude only that focused excerpt — so it answers in seconds, not by grepping a big file.
     _cc_resolve_many "${chats[@]}" || return 1
     print -u2 -- $'\e[2mPreparing '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
-    local i; local -a textfiles
-    for i in {1..${#_CC_RM_TFS}}; do textfiles+=("$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")"); done
-    prompt="Read the following Claude Code conversation transcript file(s) — cleaned text extracts (## USER / ## ASSISTANT turns). SEARCH THEM THOROUGHLY before answering: grep not just the literal wording of the question but ALSO the technical terms the answer would be recorded under — function/method names, field names, formulas, specific numbers, file paths, CR/ticket ids — and read enough surrounding turns to be complete. Prefer concrete specifics (exact formulas, numbers, code line references) over vague description; if a formula or value exists in the transcript, quote it. Answer strictly from the transcript content. Only after a genuine, multi-term search, if the answer is truly absent, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
-    for i in {1..${#textfiles}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${textfiles[i]}"$'\n'; done
+    local i; local -a pairs textfiles tf
+    for i in {1..${#_CC_RM_TFS}}; do
+      tf=$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")
+      textfiles+=("$tf"); pairs+=("${_CC_RM_NAMES[i]}"$'\t'"$tf")
+    done
+    local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
+    if [[ -n "$excerpts" ]]; then
+      prompt="Answer the question strictly and specifically from the conversation excerpts below — the most relevant turns, pre-selected for you (## USER / ## ASSISTANT). Quote exact formulas, numbers, code line references, and file/CR/ticket identifiers when present. If the excerpts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== RELEVANT EXCERPTS ==="$'\n'"$excerpts"
+    else
+      # fallback (no python, or no keyword hit): let claude read the extract file(s) itself
+      prompt="Read the following conversation transcript extract file(s) (## USER / ## ASSISTANT turns), search them, and answer strictly from their content — quote exact formulas/numbers/ids. If not present, reply beginning 'CANNOT ANSWER:'. Never invent."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
+      for i in {1..${#textfiles}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${textfiles[i]}"$'\n'; done
+    fi
   fi
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
