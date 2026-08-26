@@ -13,6 +13,7 @@
 #   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
 #   ccfetch "<A>" "<B>" …         fetch MULTIPLE chats at once (per-chat use/regenerate, parallel; offers a new seeded session)
 #   ccfetch                       (no arg) multi-select picker — type to filter, Space ticks several, Enter fetches
+#   ccask [-r] "<q>" [chat …]     ask Claude a one-shot question about saved chat(s) (headless; answers from summaries or says CANNOT ANSWER)
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
@@ -82,6 +83,13 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -r, --refresh                regenerate the cached summary (one chat, or all in multi mode)
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
+    ccask)     print -r -- 'ccask — ask Claude a one-shot question about one or more saved chats (headless; no new conversation).
+  Usage: ccask [-r] "<question>" [<chat> ...]
+  Resolves each chat by name (exact -> substring), reuses/creates their cached summaries, then
+  asks claude -p to answer FROM THOSE SUMMARIES ONLY. With no chats named, opens the multi-select picker.
+  If the summaries lack the answer, it replies starting "CANNOT ANSWER:" instead of inventing one.
+  Flags:
+    -r, --refresh   regenerate the chat summaries before asking.';;
     cccache)   print -r -- 'cccache — manage the ccfetch/ccspec summary cache.
   Usage:
     cccache [-l|--list]          list cached summaries (TYPE column shows fetch or spec)
@@ -168,6 +176,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat (cached; -r refresh; --file <p>)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<A>" "<B>" …'         'fetch MULTIPLE chats at once (per-chat use/regen, parallel)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccask "<q>" [chat …]'          'ask Claude a question about saved chat(s), headless'
   printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch/ccspec summary cache'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
@@ -713,6 +722,69 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
   fi
 }
 
+_cc_gather_summaries() {   # $1=refresh flag; rest=names. Non-interactive: reuse cache, gen missing in parallel.
+  setopt local_options no_monitor            # sets _CC_ASK_CONTEXT (combined) + _CC_ASK_NAMES; rc 0/1
+  local refresh="${1-}"; shift
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; local cdir="$base/claudius-cache"
+  local qq name id match_id match_name
+  local -a ids names tfs cfiles gen
+  for qq in "$@"; do
+    match_id=; match_name=
+    while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${qq:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    if [[ -z $match_id ]]; then
+      while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${qq:l}"* ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    fi
+    [[ -z $match_id ]] && { echo "No session matching '$qq'. Known:" >&2; _cc_plain >&2; return 1; }
+    local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
+    (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)." >&2; return 1; }
+    ids+=("$match_id"); names+=("$match_name"); tfs+=("${tf[1]}"); cfiles+=("$cdir/$match_id.fetch.md")
+  done
+  mkdir -p "$cdir"
+  local i
+  for i in {1..${#ids}}; do [[ "$refresh" == 1 || ! -s "${cfiles[i]}" ]] && gen+=($i); done
+  if (( ${#gen} )); then
+    print -u2 "Summarising ${#gen} chat(s)…"
+    local idx
+    for idx in $gen; do
+      ( claude -p "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary: goal, key decisions/answers, current state, open next steps, important file/CR/ticket references. Short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+    done
+    wait
+  fi
+  local combined=""; _CC_ASK_NAMES=()
+  for i in {1..${#ids}}; do
+    [[ -s "${cfiles[i]}" ]] && { combined+=$'\n\n# '"${names[i]}"$'\n\n'"$(cat -- "${cfiles[i]}")"; _CC_ASK_NAMES+=("${names[i]}"); }
+  done
+  [[ -z "$combined" ]] && { echo "no summaries available." >&2; return 1; }
+  _CC_ASK_CONTEXT="${combined# }"; return 0
+}
+
+ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
+  command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
+  local refresh=
+  [[ "${1-}" == -r || "${1-}" == --refresh ]] && { refresh=1; shift; }
+  local q="${1-}"
+  [[ -z $q ]] && { echo 'usage: ccask [-r] "<question>" [<chat> ...]'; return 2; }
+  shift
+  local -a chats=("$@")
+  if (( ${#chats} == 0 )); then
+    if [[ -t 0 && -t 1 ]]; then
+      _cc_pick_names; case $? in 2) echo 'usage: ccask [-r] "<question>" [<chat> ...]'; return 2;; 1) return 1;; esac
+      chats=("${_CC_SEL_NAMES[@]}")
+    else
+      echo 'ccask: name at least one chat — e.g. ccask "<question>" "Backend Changes"'; return 2
+    fi
+  fi
+  _CC_ASK_CONTEXT= _CC_ASK_NAMES=()
+  _cc_gather_summaries "$refresh" "${chats[@]}" || return 1
+  print -u2 -- $'\e[2mAsking about: '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
+  local prompt out
+  prompt="You are answering a question using ONLY the summaries of the Claude Code conversation(s) below. Answer concisely and directly. If the summaries do not contain enough information to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what specifically is missing (suggest re-running with -r to refresh the summaries, or naming a different chat). Never invent details not present in the summaries."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
+  out=$(claude -p "$prompt")
+  [[ -z "$out" ]] && { echo "no answer produced."; return 1; }
+  print -r -- "$out"
+}
+
 ccfetch() {
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccfetch; return 0; }
   # Usage:
@@ -1111,6 +1183,6 @@ if (( $+functions[compdef] )); then
     compadd -U -a matched
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
-  compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport
+  compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
   compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache
 fi
