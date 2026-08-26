@@ -206,8 +206,8 @@ n=$(_cc_rows | wc -l | tr -d ' '); ok "map unchanged by ccadd -h" 4 "$n"
 print "===== ccplay wordle ====="
 out=$(ccplay list);                      okc "wordle in games list" "wordle" "$out"
 out=$(printf 'q\n' | ccplay wordle 2>&1); okc "wordle reveals word on quit" "the word was" "$out"
-stripped=$(print -r -- "$out" | perl -pe 's/\e\[[0-9;]*m//g')
-okc "wordle shows the keyboard tracker" "Q W E R T Y" "$stripped"
+stripped=$(print -r -- "$out" | perl -pe 's/\e\[[0-9;]*m//g; s/ //g')
+okc "wordle shows the keyboard tracker" "QWERTYUIOP" "$stripped"
 [[ -r /usr/share/dict/words ]] && { out=$(printf 'zxqwj\nq\n' | ccplay wordle 2>&1); okc "wordle rejects a non-dictionary guess" "not in the word list" "$out"; }
 out=$(ccplay nope 2>&1);                 okc "unknown game rejected" "unknown game" "$out"
 

@@ -381,18 +381,18 @@ _ccplay_8ball() {   # magic 8-ball
   local q; read "q?  🎱 ask a yes/no question: " || return 0
   printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
 }
-_ccplay_wordle_kb() {   # draw the QWERTY letter-tracker (reads assoc array `kb` via zsh dynamic scope)
-  local -a rows=(qwertyuiop asdfghjkl zxcvbnm) indent=('' ' ' '   ')
+_ccplay_wordle_kb() {   # draw the QWERTY key tracker (reads assoc array `kb` via zsh dynamic scope)
+  local -a rows=(qwertyuiop asdfghjkl zxcvbnm) indent=('' '  ' '      ')
   local i c ch out
   for (( i=1; i<=3; i++ )); do
     out="  ${indent[i]}"
     for c in ${(s::)rows[i]}; do
       ch=${(U)c}
       case ${kb[$c]-} in
-        G) out+=$'\e[42;30m'"$ch"$'\e[0m ';;   # right spot
-        Y) out+=$'\e[43;30m'"$ch"$'\e[0m ';;   # in word
-        X) out+=$'\e[90m'"$ch"$'\e[0m ';;      # used, not in word (dark)
-        *) out+=$'\e[1m'"$ch"$'\e[0m ';;       # unused
+        G) out+=$'\e[48;5;34;38;5;231m '"$ch"$' \e[0m ';;    # right spot  (green key)
+        Y) out+=$'\e[48;5;178;38;5;16m '"$ch"$' \e[0m ';;    # in word     (gold key)
+        X) out+=$'\e[48;5;238;38;5;245m '"$ch"$' \e[0m ';;   # used/absent (dark key)
+        *) out+=$'\e[48;5;250;38;5;16m '"$ch"$' \e[0m ';;    # unused      (light key)
       esac
     done
     print -u2 -- "$out"
@@ -407,7 +407,6 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
   local dict=; local d; for d in /usr/share/dict/words /usr/dict/words; do [[ -r $d ]] && { dict=$d; break; }; done
   local max=6 n=0 guess i
   local -A kb rank=(G 3 Y 2 X 1)
-  printf '  \e[2mGuess the 5-letter word — %d tries.  \e[42;30m G \e[0;2m=right spot  \e[43;30m Y \e[0;2m=wrong spot  \e[90mX\e[0;2m=not in word.  (q quits)\e[0m\n' "$max"
   _ccplay_wordle_kb
   while (( n < max )); do
     read "guess?  [$((n+1))/$max] > " || { printf '  the word was \e[1m%s\e[0m\n' "$word"; return 0; }
@@ -430,9 +429,9 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
     for i in {1..5}; do
       ch=${(U)gss[i]}
       case ${mark[i]} in
-        G) row+=$'\e[42;30m '"$ch"$' \e[0m';;
-        Y) row+=$'\e[43;30m '"$ch"$' \e[0m';;
-        X) row+=$'\e[100;97m '"$ch"$' \e[0m';;
+        G) row+=$'\e[48;5;34;38;5;231m '"$ch"$' \e[0m ';;
+        Y) row+=$'\e[48;5;178;38;5;16m '"$ch"$' \e[0m ';;
+        X) row+=$'\e[48;5;238;38;5;245m '"$ch"$' \e[0m ';;
       esac
       (( ${rank[${mark[i]}]:-0} > ${rank[${kb[${gss[i]}]:-}]:-0} )) && kb[${gss[i]}]=${mark[i]}  # keyboard: keep best
     done
@@ -462,7 +461,7 @@ ccplay() {   # mini games to pass the time while Claude thinks (no session impac
     8ball    "Magic 8-ball — ask a yes/no question"
   )
   _cc_g_instr=(
-    wordle   "Guess a 5-letter word in 6 tries. After each guess: green=right spot, yellow=in word/wrong spot, gray=absent. q quits."
+    wordle   "Guess a real 5-letter word in 6 tries. Tiles: green=right spot · yellow=in word, wrong spot · gray=absent. Used letters dim on the keyboard below. q quits."
     guess    "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
     rps      "Type r, p, or s and Enter. I pick secretly, then we compare."
     flip     "Just watch — heads or tails."
