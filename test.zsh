@@ -120,7 +120,7 @@ print "===== ccask ====="
 # default mode: reads the FULL transcript(s)
 out=$(ccask "what did we decide" "Alpha" </dev/null 2>/dev/null); okc "ccask embeds the question" "what did we decide" "$out"
 okc "ccask default reads transcripts" "TRANSCRIPTS:" "$out"
-okc "ccask names the transcript path" "$idA.jsonl" "$out"
+okc "ccask points at a compact .text.md extract" ".text.md" "$out"
 okc "ccask instructs a CANNOT ANSWER fallback" "CANNOT ANSWER" "$out"
 # summary mode (-s): answers from cached summaries instead
 out=$(ccask -s "what did we decide" "Alpha" </dev/null 2>/dev/null); okc "ccask -s uses summaries" "CONVERSATION SUMMARIES" "$out"

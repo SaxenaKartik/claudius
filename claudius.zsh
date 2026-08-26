@@ -85,9 +85,10 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about one or more saved chats (headless; no new conversation).
   Usage: ccask [-s] [-r] "<question>" [<chat> ...]
-  Resolves each chat by name (exact -> substring). By DEFAULT reads the FULL transcript(s) via
-  claude -p and answers strictly from them (best fidelity — sees the detail summaries drop).
-  With no chats named, opens the multi-select picker. If the answer is not in the chats, it
+  Resolves each chat by name (exact -> substring). By DEFAULT reads the transcript(s) as a compact
+  TEXT extract (the raw JSONL is ~97% tool/metadata noise; the extract is ~30x smaller, so it is
+  fast) and answers strictly from them — a live spinner shows progress. Best fidelity; sees detail
+  that summaries drop. No chats named -> multi-select picker. If the answer is not in the chats it
   replies starting "CANNOT ANSWER:" instead of inventing one.
   Flags:
     -s, --summary   answer from the cached handoff summaries instead (fast/cheap, but lossy).
@@ -777,6 +778,63 @@ _cc_resolve_many() {   # names -> sets arrays _CC_RM_IDS/_CC_RM_NAMES/_CC_RM_TFS
   return 0
 }
 
+_cc_transcript_text() {   # $1=id $2=jsonl -> ensures a compact text extract exists (cached, fresh); prints its path
+  local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
+  local out="$cdir/$id.text.md"
+  mkdir -p "$cdir"
+  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]]; then
+    command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
+    python3 - "$jsonl" "$out" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
+import sys, json
+src, dst = sys.argv[1], sys.argv[2]
+def render(c):
+    if isinstance(c, str): return c
+    if not isinstance(c, list): return ""
+    parts = []
+    for b in c:
+        if not isinstance(b, dict): continue
+        t = b.get("type")
+        if t == "text": parts.append(b.get("text", ""))
+        elif t == "tool_use": parts.append(f"[tool: {b.get('name','?')}]")
+        elif t == "tool_result":
+            r = b.get("content", "")
+            if isinstance(r, list): r = " ".join(x.get("text","") for x in r if isinstance(x, dict))
+            r = str(r).strip()
+            if r: parts.append(f"[tool result: {r[:600]}]")
+    return "\n".join(p for p in parts if p)
+with open(src) as f, open(dst, "w") as w:
+    for line in f:
+        try: o = json.loads(line)
+        except Exception: continue
+        m = o.get("message")
+        if not isinstance(m, dict): continue
+        role = m.get("role")
+        if role not in ("user", "assistant"): continue
+        txt = render(m.get("content")).strip()
+        if txt: w.write(f"\n## {role.upper()}\n{txt}\n")
+PY
+  fi
+  print -r -- "$out"
+}
+
+_cc_claude_spin() {   # run claude -p "$1" with a live spinner on stderr; echo the answer to stdout
+  local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
+  claude -p "$prompt" > "$tmp" 2>/dev/null &
+  local pid=$! t0=$SECONDS i=0 spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+  trap 'kill $pid 2>/dev/null' INT
+  if [[ -t 2 ]]; then
+    while kill -0 $pid 2>/dev/null; do
+      printf '\r\e[2m  %s thinking… %ds  (Ctrl-C to cancel)\e[0m' "${spin[i % ${#spin} + 1]}" "$(( SECONDS - t0 ))" >&2
+      sleep 0.2; (( i++ ))
+    done
+    printf '\r\e[2K' >&2
+  fi
+  wait $pid 2>/dev/null
+  trap - INT
+  local out; out=$(< "$tmp"); rm -f "$tmp"
+  print -r -- "$out"
+}
+
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
@@ -808,15 +866,17 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     print -u2 -- $'\e[2mAsking (summaries): '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
     prompt="Answer the question using ONLY the conversation summaries below. If they lack the detail to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing (suggest dropping -s so I read the full transcripts, or -r to refresh). Never invent details."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
   else
-    # default: read the FULL transcript(s) — same fidelity as opening the sessions
+    # default: read the conversation transcript(s) — but a compact TEXT extract, not the raw
+    # multi-MB JSONL (which is ~97% tool/metadata noise and painfully slow to read).
     _cc_resolve_many "${chats[@]}" || return 1
-    print -u2 -- $'\e[2mReading '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
-    prompt="Read the following Claude Code session transcript file(s) IN FULL with your file-reading tool, then answer the question strictly and specifically from their content — include concrete details, numbers, formulas, file/CR/ticket identifiers when present. If the transcripts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
-    local i
-    for i in {1..${#_CC_RM_TFS}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${_CC_RM_TFS[i]}"$'\n'; done
+    print -u2 -- $'\e[2mPreparing '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
+    local i; local -a textfiles
+    for i in {1..${#_CC_RM_TFS}}; do textfiles+=("$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")"); done
+    prompt="Read the following Claude Code conversation transcript file(s) — they are cleaned text extracts (## USER / ## ASSISTANT turns). Use your file-reading/grep tools to find the relevant turns, then answer the question strictly and specifically from their content — include concrete details, numbers, formulas, file/CR/ticket identifiers when present. If the transcripts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
+    for i in {1..${#textfiles}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${textfiles[i]}"$'\n'; done
   fi
-  out=$(claude -p "$prompt")
-  [[ -z "$out" ]] && { echo "no answer produced."; return 1; }
+  out=$(_cc_claude_spin "$prompt")
+  [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   print -r -- "$out"
 }
 
@@ -899,9 +959,9 @@ cccache() {   # manage the ccfetch/ccspec summary cache
         local name id target=
         while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${2:l}"* ]] && { target=$id; break; }; done < <(_cc_rows)
         [[ -z $target ]] && { echo "No mapped chat matching '$2'."; return 1; }
-        rm -f "$cdir/$target.fetch.md" "$cdir/$target.spec.md" && echo "cleared cache for '$2'."
+        rm -f "$cdir/$target.fetch.md" "$cdir/$target.spec.md" "$cdir/$target.text.md" && echo "cleared cache for '$2'."
       else
-        rm -f "$cdir"/*.fetch.md(N) "$cdir"/*.spec.md(N) 2>/dev/null; echo "cache cleared."
+        rm -f "$cdir"/*.fetch.md(N) "$cdir"/*.spec.md(N) "$cdir"/*.text.md(N) 2>/dev/null; echo "cache cleared."
       fi
       ;;
     *) echo "usage: cccache [--list] | cccache --clear [name]"; return 2;;
