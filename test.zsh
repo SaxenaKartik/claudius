@@ -117,9 +117,13 @@ _cc_pick_names </dev/null >/dev/null 2>&1; okrc "_cc_pick_names non-TTY -> 2" 2 
 out=$(ccfetch "Alpha" fooextra </dev/null 2>/dev/null); okc "ccfetch single+extra not multi" "fooextra" "$out"
 
 print "===== ccask ====="
+# default mode: reads the FULL transcript(s)
 out=$(ccask "what did we decide" "Alpha" </dev/null 2>/dev/null); okc "ccask embeds the question" "what did we decide" "$out"
-okc "ccask includes summaries context" "CONVERSATION SUMMARIES" "$out"
+okc "ccask default reads transcripts" "TRANSCRIPTS:" "$out"
+okc "ccask names the transcript path" "$idA.jsonl" "$out"
 okc "ccask instructs a CANNOT ANSWER fallback" "CANNOT ANSWER" "$out"
+# summary mode (-s): answers from cached summaries instead
+out=$(ccask -s "what did we decide" "Alpha" </dev/null 2>/dev/null); okc "ccask -s uses summaries" "CONVERSATION SUMMARIES" "$out"
 ccask </dev/null >/dev/null 2>&1; okrc "ccask no-question usage exit" 2 $?
 out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No session matching" "$out"
 

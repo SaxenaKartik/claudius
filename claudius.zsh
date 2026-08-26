@@ -13,7 +13,7 @@
 #   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
 #   ccfetch "<A>" "<B>" …         fetch MULTIPLE chats at once (per-chat use/regenerate, parallel; offers a new seeded session)
 #   ccfetch                       (no arg) multi-select picker — type to filter, Space ticks several, Enter fetches
-#   ccask [-r] "<q>" [chat …]     ask Claude a one-shot question about saved chat(s) (headless; answers from summaries or says CANNOT ANSWER)
+#   ccask [-s] "<q>" [chat …]     ask Claude a one-shot question about saved chat(s), headless — reads full transcripts (-s = from summaries); says CANNOT ANSWER if not covered
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
@@ -84,12 +84,14 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about one or more saved chats (headless; no new conversation).
-  Usage: ccask [-r] "<question>" [<chat> ...]
-  Resolves each chat by name (exact -> substring), reuses/creates their cached summaries, then
-  asks claude -p to answer FROM THOSE SUMMARIES ONLY. With no chats named, opens the multi-select picker.
-  If the summaries lack the answer, it replies starting "CANNOT ANSWER:" instead of inventing one.
+  Usage: ccask [-s] [-r] "<question>" [<chat> ...]
+  Resolves each chat by name (exact -> substring). By DEFAULT reads the FULL transcript(s) via
+  claude -p and answers strictly from them (best fidelity — sees the detail summaries drop).
+  With no chats named, opens the multi-select picker. If the answer is not in the chats, it
+  replies starting "CANNOT ANSWER:" instead of inventing one.
   Flags:
-    -r, --refresh   regenerate the chat summaries before asking.';;
+    -s, --summary   answer from the cached handoff summaries instead (fast/cheap, but lossy).
+    -r, --refresh   with -s, regenerate the summaries first.';;
     cccache)   print -r -- 'cccache — manage the ccfetch/ccspec summary cache.
   Usage:
     cccache [-l|--list]          list cached summaries (TYPE column shows fetch or spec)
@@ -176,7 +178,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat (cached; -r refresh; --file <p>)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<A>" "<B>" …'         'fetch MULTIPLE chats at once (per-chat use/regen, parallel)'
-  printf '  \e[36m%-33s\e[0m %s\n' 'ccask "<q>" [chat …]'          'ask Claude a question about saved chat(s), headless'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccask "<q>" [chat …]'          'ask Claude about saved chat(s), headless (reads transcripts; -s = summaries)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch/ccspec summary cache'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
@@ -758,28 +760,61 @@ _cc_gather_summaries() {   # $1=refresh flag; rest=names. Non-interactive: reuse
   _CC_ASK_CONTEXT="${combined# }"; return 0
 }
 
+_cc_resolve_many() {   # names -> sets arrays _CC_RM_IDS/_CC_RM_NAMES/_CC_RM_TFS; rc 0 all-resolved, 1 else
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" qq name id match_id match_name
+  set -A _CC_RM_IDS; set -A _CC_RM_NAMES; set -A _CC_RM_TFS
+  for qq in "$@"; do
+    match_id=; match_name=
+    while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${qq:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    if [[ -z $match_id ]]; then
+      while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${qq:l}"* ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+    fi
+    [[ -z $match_id ]] && { echo "No session matching '$qq'. Known:" >&2; _cc_plain >&2; return 1; }
+    local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
+    (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)." >&2; return 1; }
+    _CC_RM_IDS+=("$match_id"); _CC_RM_NAMES+=("$match_name"); _CC_RM_TFS+=("${tf[1]}")
+  done
+  return 0
+}
+
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh=
-  [[ "${1-}" == -r || "${1-}" == --refresh ]] && { refresh=1; shift; }
+  local refresh= summary=
+  while [[ "${1-}" == -* ]]; do
+    case "$1" in
+      -r|--refresh) refresh=1; shift ;;
+      -s|--summary) summary=1; shift ;;
+      *) break ;;
+    esac
+  done
   local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask [-r] "<question>" [<chat> ...]'; return 2; }
+  [[ -z $q ]] && { echo 'usage: ccask [-s] [-r] "<question>" [<chat> ...]'; return 2; }
   shift
   local -a chats=("$@")
   if (( ${#chats} == 0 )); then
     if [[ -t 0 && -t 1 ]]; then
-      _cc_pick_names; case $? in 2) echo 'usage: ccask [-r] "<question>" [<chat> ...]'; return 2;; 1) return 1;; esac
+      _cc_pick_names; case $? in 2) echo 'usage: ccask [-s] [-r] "<question>" [<chat> ...]'; return 2;; 1) return 1;; esac
       chats=("${_CC_SEL_NAMES[@]}")
     else
       echo 'ccask: name at least one chat — e.g. ccask "<question>" "Backend Changes"'; return 2
     fi
   fi
-  _CC_ASK_CONTEXT= _CC_ASK_NAMES=()
-  _cc_gather_summaries "$refresh" "${chats[@]}" || return 1
-  print -u2 -- $'\e[2mAsking about: '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
   local prompt out
-  prompt="You are answering a question using ONLY the summaries of the Claude Code conversation(s) below. Answer concisely and directly. If the summaries do not contain enough information to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what specifically is missing (suggest re-running with -r to refresh the summaries, or naming a different chat). Never invent details not present in the summaries."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
+  if [[ -n $summary ]]; then
+    # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)
+    _CC_ASK_CONTEXT= _CC_ASK_NAMES=()
+    _cc_gather_summaries "$refresh" "${chats[@]}" || return 1
+    print -u2 -- $'\e[2mAsking (summaries): '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
+    prompt="Answer the question using ONLY the conversation summaries below. If they lack the detail to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing (suggest dropping -s so I read the full transcripts, or -r to refresh). Never invent details."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
+  else
+    # default: read the FULL transcript(s) — same fidelity as opening the sessions
+    _cc_resolve_many "${chats[@]}" || return 1
+    print -u2 -- $'\e[2mReading '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
+    prompt="Read the following Claude Code session transcript file(s) IN FULL with your file-reading tool, then answer the question strictly and specifically from their content — include concrete details, numbers, formulas, file/CR/ticket identifiers when present. If the transcripts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the transcripts."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
+    local i
+    for i in {1..${#_CC_RM_TFS}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${_CC_RM_TFS[i]}"$'\n'; done
+  fi
   out=$(claude -p "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced."; return 1; }
   print -r -- "$out"
