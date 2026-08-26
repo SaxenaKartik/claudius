@@ -416,8 +416,8 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
     if [[ -n $dict && "$guess" != "$word" ]] && ! LC_ALL=C grep -qix -- "$guess" "$dict"; then
       printf '  \e[2m(“%s” is not in the word list — try a real word)\e[0m\n' "$guess"; continue
     fi
-    local -a tgt=(${(s::)word}) gss=(${(s::)guess}) mark
-    local -A avail; for i in {1..5}; do avail[${tgt[i]}]=$(( ${avail[${tgt[i]}]:-0} + 1 )); done
+    local -a tgt=(${(s::)word}) gss=(${(s::)guess}) mark=()
+    local -A avail=(); for i in {1..5}; do avail[${tgt[i]}]=$(( ${avail[${tgt[i]}]:-0} + 1 )); done
     for i in {1..5}; do                                   # pass 1: greens (exact position)
       if [[ ${gss[i]} == ${tgt[i]} ]]; then mark[i]=G; avail[${gss[i]}]=$(( avail[${gss[i]}] - 1 )); else mark[i]=.; fi
     done
@@ -425,7 +425,7 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
       [[ ${mark[i]} == G ]] && continue
       if (( ${avail[${gss[i]}]:-0} > 0 )); then mark[i]=Y; avail[${gss[i]}]=$(( avail[${gss[i]}] - 1 )); else mark[i]=X; fi
     done
-    local row="" ch
+    local row="" ch=""
     for i in {1..5}; do
       ch=${(U)gss[i]}
       case ${mark[i]} in
@@ -435,7 +435,7 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
       esac
       (( ${rank[${mark[i]}]:-0} > ${rank[${kb[${gss[i]}]:-}]:-0} )) && kb[${gss[i]}]=${mark[i]}  # keyboard: keep best
     done
-    (( n++ )); printf '  %s\n' "$row"
+    (( n++ )); printf '  %s\n\n' "$row"
     _ccplay_wordle_kb
     if [[ "$guess" == "$word" ]]; then
       local plural=tries; (( n == 1 )) && plural=try
