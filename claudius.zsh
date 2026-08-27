@@ -118,8 +118,9 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     ccimport)  print -r -- 'ccimport — name your UNMAPPED on-disk sessions into the map.
   Usage: ccimport
   Multi-select picker of sessions not yet in the map: type to filter, up/down, Space ticks,
-  Enter confirms, Esc quits. Preview = date, workspace, first user message. Prompts for a
-  name per pick, then adds each with ccadd.';;
+  Enter confirms, Esc quits. Preview = date, workspace, first user message. For each pick it
+  SUGGESTS a name (via claude, from the chat first message) — Enter accepts it, type to override,
+  "-" skips — then adds each with ccadd.';;
     ccremove)  print -r -- 'ccremove — delete a row from the map.
   Usage: ccremove [-y] "<name>"
   Confirms first and refuses ambiguous matches. With no name, opens the picker.
@@ -1228,12 +1229,38 @@ ccimport() {
   tput cnorm 2>/dev/null
   [[ -n $cancelled ]] && { print -u2 "cancelled"; return 1; }
   local added=0 nm
-  for (( i=1; i<=n; i++ )); do
-    [[ ${checked[i]} == 1 ]] || continue
-    print -u2 -- $'\e[2m'"${labels[i]}"$'\e[0m'
-    read "nm?Name for ${ids[i]:0:8}… (blank skips): "
-    [[ -z $nm ]] && { echo "skipped ${ids[i]}"; continue; }
-    ccadd "$nm" "${ids[i]}" && (( added++ ))
+  local -a picks=(); for (( i=1; i<=n; i++ )); do [[ ${checked[i]} == 1 ]] && picks+=($i); done
+  (( ${#picks} == 0 )) && { echo "Nothing selected."; return 0; }
+  # suggest a name for each pick (parallel; via claude, from the chat's first message)
+  local -A sugg=()
+  if command -v claude >/dev/null 2>&1; then
+    setopt local_options no_monitor
+    print -u2 -- $'\e[2mSuggesting names for '"${#picks}"$' chat(s)…\e[0m'
+    local tmpd; tmpd=$(mktemp -d 2>/dev/null || echo "/tmp/ccimport.$$"); mkdir -p "$tmpd"
+    local idx msg
+    for idx in $picks; do
+      msg=${labels[idx]##*· }   # the first-message part of the preview label
+      ( claude -p "Suggest a concise 2–5 word Title Case name for a saved coding chat that begins with the message below. Output ONLY the name — no quotes, punctuation, or explanation."$'\n\n'"Message: ${msg}" > "$tmpd/$idx" 2>/dev/null ) &
+    done
+    wait
+    for idx in $picks; do
+      sugg[$idx]=$(print -r -- "$(<"$tmpd/$idx" 2>/dev/null)" | head -1 | sed 's/[`|"]//g; s/^[[:space:]]*//; s/[[:space:]]*$//')
+      sugg[$idx]=${sugg[$idx][1,48]}
+    done
+    rm -rf "$tmpd"
+  fi
+  for idx in $picks; do
+    print -u2 -- $'\e[2m'"${labels[idx]}"$'\e[0m'
+    local s=${sugg[$idx]-}
+    if [[ -n $s ]]; then
+      print -n -u2 -- "  Name for ${ids[idx]:0:8}…  suggested "$'\e[36m'"$s"$'\e[0m'"  — Enter accepts · '-' skips · or type your own: "
+      read -r nm
+      [[ -z $nm ]] && nm=$s
+    else
+      read "nm?  Name for ${ids[idx]:0:8}… (blank skips): "
+    fi
+    [[ "$nm" == "-" || -z $nm ]] && { echo "skipped ${ids[idx]:0:8}"; continue; }
+    ccadd "$nm" "${ids[idx]}" && (( added++ ))
   done
   echo "Imported $added session(s)."
 }
