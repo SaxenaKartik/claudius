@@ -31,7 +31,11 @@ idU=eeeeeeee-1111-2222-3333-444444444444   # on-disk transcript, never mapped ->
 mkdir -p "$CLAUDE_CONFIG_DIR/projects/pA" "$CLAUDE_CONFIG_DIR/projects/pB" "$CLAUDE_CONFIG_DIR/projects/pC"
 print -r -- '{"type":"summary","cwd":"'"$WSA"'","usage":{"output_tokens":5000}}' > "$CLAUDE_CONFIG_DIR/projects/pA/$idA.jsonl"
 print -r -- '{"type":"summary","cwd":"'"$WSB"'","usage":{"output_tokens":12000}}' > "$CLAUDE_CONFIG_DIR/projects/pB/$idB.jsonl"
-print -r -- '{"type":"user","message":{"role":"user","content":"import me please preview text"},"cwd":"'"$WSA"'"}' > "$CLAUDE_CONFIG_DIR/projects/pC/$idU.jsonl"
+# idU: a real (multi-user-turn) unmapped chat so it survives ccask -a's one-shot filter
+{ print -r -- '{"type":"user","message":{"role":"user","content":"import me please preview text"},"cwd":"'"$WSA"'"}'
+  print -r -- '{"type":"assistant","message":{"role":"assistant","content":"ok"}}'
+  print -r -- '{"type":"user","message":{"role":"user","content":"more preview details follow"},"cwd":"'"$WSA"'"}'
+} > "$CLAUDE_CONFIG_DIR/projects/pC/$idU.jsonl"
 
 unset CLAUDE_CODE_SESSION_ID   # isolate: don't inherit the real session's id
 _CC_COMPDEF_ARGS=""; compdef(){ _CC_COMPDEF_ARGS+=" $*"; }   # stub accumulates registrations

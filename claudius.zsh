@@ -27,6 +27,13 @@
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
 _CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
 
+# Signature of Claudius' OWN headless `claude -p` runs (matched on a session's FIRST user message).
+# Used to keep them out of ccask's search corpus and to let `cccleanup` delete them.
+_CC_INTERNAL_SIG='You are answering from excerpts of MULTIPLE|Answer the question strictly and specifically|Answer the question using ONLY the conversation summaries|Read the following [A-Za-z ]{0,30}transcript|Read the Claude Code (session|conversation) transcript|Read the document at.*produce a concise summary|Write a Markdown CONTEXT EXPORT|write a SPEC document in Markdown|explain it in simple, plain terms|Suggest a concise 2'
+_cc_is_internal() {   # 0 if $1 is a Claudius-generated headless session (by its first user message)
+  grep -m1 '"type":"user"' "$1" 2>/dev/null | grep -qE "$_CC_INTERNAL_SIG"
+}
+
 # Portable file-time helpers — macOS/BSD `stat -f` and GNU `stat -c` are incompatible,
 # so prefer zsh's own modules (work identically on macOS, Linux, and WSL).
 zmodload -F zsh/stat b:zstat 2>/dev/null   # provides zstat (portable mtime)
@@ -958,26 +965,43 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   (( ${#qt} == 0 )) && qt=($qwords)
   (( ${#qt} == 0 )) && { echo "ask a real question, e.g. ccask -a \"what did we decide about X\""; return 2; }
   local pat=${(j:|:)qt}
-  local -a files; files=( "$base"/projects/*/*.jsonl(N) )
+  local -a allfiles; allfiles=( "$base"/projects/*/*.jsonl(N) )
+  (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
+  # boilerplate; while here, capture how many query terms hit each chat's FIRST message (its topic).
+  local -a files; local ff0 fum fl t2 nu; typeset -A fmsg
+  for ff0 in $allfiles; do
+    # Skip Claudius' headless one-shots ROBUSTLY (independent of prompt wording): a ccask/ccfetch
+    # `claude -p` run has exactly ONE user turn; real chats have many. (grep -c -m2 stops early = fast.)
+    nu=$(LC_ALL=C grep -c -m2 '"type":"user"' "$ff0" 2>/dev/null)
+    (( ${nu:-0} <= 1 )) && continue
+    fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
+    [[ "$fum" == *"starting a new working session. Below are handoff"* ]] && continue   # seeded-summary session
+    files+=("$ff0"); fl=${fum:l}; local c=0
+    for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
+    fmsg[$ff0]=$c
+  done
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
   print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"$'…\e[0m'
-  # pass 1 (cheap): total keyword-line hits per chat — a coarse filter
-  local f sc; local -a scored
-  for f in $files; do
-    sc=$(LC_ALL=C grep -ciE -- "$pat" "$f" 2>/dev/null)
-    (( ${sc:-0} > 0 )) && scored+=("$sc"$'\t'"$f")
+  # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
+  # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
+  # all files gives both the document-frequency (df) AND which files hit.
+  local N=${#files} t; typeset -A score
+  for t in $qt; do
+    local -a mf; mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
+    local df=${#mf}; (( df == 0 )) && continue
+    local w=$(( N - df + 1 )); local ff
+    for ff in $mf; do score[$ff]=$(( ${score[$ff]:-0} + w )); done
+  done
+  # Final score: first-message topical match dominates (the chat that's ABOUT the question wins),
+  # body IDF coverage breaks ties.
+  local -a scored=(); local ff total
+  for ff in $files; do
+    total=$(( ${fmsg[$ff]:-0} * 1000 + ${score[$ff]:-0} ))
+    (( total > 0 )) && scored+=("$total"$'\t'"$ff")
   done
   (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
-  scored=(${(On)scored})
-  # pass 2 (on the top candidates): rank by DISTINCT query-term coverage, not raw volume — so a small
-  # chat that covers more of the question beats a huge chat that just repeats one word.
-  local -a cand=(${scored[1,12]}) reranked; local line f2 dc
-  for line in "${cand[@]}"; do
-    f2=${line#*$'\t'}
-    dc=$(LC_ALL=C grep -oiE -- "$pat" "$f2" 2>/dev/null | tr 'A-Z' 'a-z' | sort -u | wc -l | tr -d ' ')
-    reranked+=("$dc"$'\t'"$line")               # dc \t count \t file
-  done
-  scored=("${(@f)$(printf '%s\n' "${reranked[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2nr | cut -f2-)}")
+  scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
   local K=${CCASK_TOPK:-5}
   local -a top=(${scored[1,K]})
   local line= sc2= f2= id2= tf= lbl=; local -a pairs labels   # explicit = : bare re-decl of an already-set var prints it in zsh
@@ -1156,13 +1180,8 @@ cccleanup() {   # remove Claudius' own headless `claude -p` runs that got record
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cccleanup; return 0; }
   local yes=; [[ "${1-}" == -y || "${1-}" == --yes ]] && yes=1
   local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  # signatures = the opening text of Claudius-generated prompts (matched on the FIRST user message only)
-  local sig='You are answering from excerpts of MULTIPLE|Answer the question strictly and specifically|Answer the question using ONLY the conversation summaries|Read the following conversation transcript extract|Read the Claude Code session transcript \(JSONL\)|Read the document at.*produce a concise summary|Write a Markdown CONTEXT EXPORT|write a SPEC document in Markdown|explain it in simple, plain terms|Suggest a concise 2'
-  local -a hits; local f fum
-  for f in "$base"/projects/*/*.jsonl(N); do
-    fum=$(grep -m1 '"type":"user"' "$f" 2>/dev/null)
-    print -r -- "$fum" | grep -qE "$sig" && hits+=("$f")
-  done
+  local -a hits; local f
+  for f in "$base"/projects/*/*.jsonl(N); do _cc_is_internal "$f" && hits+=("$f"); done
   (( ${#hits} == 0 )) && { echo "No Claudius-internal sessions found — nothing to clean."; return 0; }
   print -u2 -- "Found ${#hits} Claudius-internal (headless claude -p) session(s) recorded as chats."
   if [[ -z $yes ]]; then
