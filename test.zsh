@@ -69,6 +69,16 @@ okc "enumerates unmapped idU" "$idU" "$out"
 okc "preview = first user message" "import me please" "$out"
 okn "excludes mapped idA" "$idA" "$out"
 okn "excludes mapped idB" "$idB" "$out"
+# ephemeral sessions (headless one-shot / slash-command) must be excluded from import & search
+idOne=cccccccc-0000-0000-0000-000000000001
+print -r -- '{"type":"user","message":{"role":"user","content":"a one-shot headless run"},"cwd":"'"$WSA"'"}' > "$CLAUDE_CONFIG_DIR/projects/pC/$idOne.jsonl"
+idSlash=cccccccc-0000-0000-0000-000000000002
+{ print -r -- '{"type":"user","message":{"role":"user","content":"<command-message>ccfetch</command-message> <command-name>/ccfetch</command-name> back"},"cwd":"'"$WSA"'"}'
+  print -r -- '{"type":"assistant","message":{"role":"assistant","content":"ok"}}'
+  print -r -- '{"type":"user","message":{"role":"user","content":"more"},"cwd":"'"$WSA"'"}' ; } > "$CLAUDE_CONFIG_DIR/projects/pC/$idSlash.jsonl"
+out=$(_cc_all_sessions)
+okn "excludes one-shot (<=1 user turn)" "$idOne" "$out"
+okn "excludes slash-command session"    "$idSlash" "$out"
 out=$(ccimport </dev/null)
 okc "ccimport non-tty header" "Unmapped sessions" "$out"
 okc "ccimport non-tty lists idU" "$idU" "$out"
