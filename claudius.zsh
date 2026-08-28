@@ -944,7 +944,8 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   local -A stop; local w
   for w in the a an of and or is are was were be to in on at by for from as it its this that with what which when where why who how do does did can could would should will your my our their has have not; do stop[$w]=1; done
   local -a qwords qt
-  qwords=(${(s: :)${(L)q//[^a-z0-9 ]/ }})
+  local ql=${(L)q}                              # NOTE: lowercase in a temp var first — the nested
+  qwords=(${(s: :)${ql//[^a-z0-9 ]/ }})         # form ${(s::)${(L)q//…}} silently drops some words in zsh
   for w in $qwords; do [[ ${#w} -ge 3 && -z ${stop[$w]-} ]] && qt+=("$w"); done
   (( ${#qt} == 0 )) && qt=($qwords)
   (( ${#qt} == 0 )) && { echo "ask a real question, e.g. ccask -a \"what did we decide about X\""; return 2; }
@@ -952,16 +953,26 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   local -a files; files=( "$base"/projects/*/*.jsonl(N) )
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
   print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"$'…\e[0m'
+  # pass 1 (cheap): total keyword-line hits per chat — a coarse filter
   local f sc; local -a scored
   for f in $files; do
     sc=$(LC_ALL=C grep -ciE -- "$pat" "$f" 2>/dev/null)
     (( ${sc:-0} > 0 )) && scored+=("$sc"$'\t'"$f")
   done
   (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
-  scored=(${(On)scored})                        # numeric-descending by leading score
+  scored=(${(On)scored})
+  # pass 2 (on the top candidates): rank by DISTINCT query-term coverage, not raw volume — so a small
+  # chat that covers more of the question beats a huge chat that just repeats one word.
+  local -a cand=(${scored[1,12]}) reranked; local line f2 dc
+  for line in "${cand[@]}"; do
+    f2=${line#*$'\t'}
+    dc=$(LC_ALL=C grep -oiE -- "$pat" "$f2" 2>/dev/null | tr 'A-Z' 'a-z' | sort -u | wc -l | tr -d ' ')
+    reranked+=("$dc"$'\t'"$line")               # dc \t count \t file
+  done
+  scored=("${(@f)$(printf '%s\n' "${reranked[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr -k2,2nr | cut -f2-)}")
   local K=${CCASK_TOPK:-5}
   local -a top=(${scored[1,K]})
-  local line sc2 f2 id2 tf lbl; local -a pairs labels
+  local line= sc2= f2= id2= tf= lbl=; local -a pairs labels   # explicit = : bare re-decl of an already-set var prints it in zsh
   for line in "${top[@]}"; do
     f2=${line#*$'\t'}; id2=${${f2:t}:r}
     tf=$(_cc_transcript_text "$id2" "$f2")
