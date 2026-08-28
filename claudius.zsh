@@ -13,7 +13,7 @@
 #   ccfetch "<name>" [extra]      summarise another chat's context (cached; -r to refresh; --file <p> for a file)
 #   ccfetch "<A>" "<B>" …         fetch MULTIPLE chats at once (per-chat use/regenerate, parallel; offers a new seeded session)
 #   ccfetch                       (no arg) multi-select picker — type to filter, Space ticks several, Enter fetches
-#   ccask [-s] "<q>" [chat …]     ask Claude a one-shot question about saved chat(s), headless — reads full transcripts (-s = from summaries); says CANNOT ANSWER if not covered
+#   ccask [-a] "<q>" [chat …]     ask Claude about your chats, headless: -a = across ALL chats (ranked + cited); else named/picked chats; -s = from summaries
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
@@ -83,9 +83,11 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -r, --refresh                regenerate the cached summary (one chat, or all in multi mode)
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
-    ccask)     print -r -- 'ccask — ask Claude a one-shot question about one or more saved chats (headless; no new conversation).
-  Usage: ccask [-s] [-r] "<question>" [<chat> ...]
-  Resolves each chat by name (exact -> substring). By DEFAULT reads the transcript(s) as a compact
+    ccask)     print -r -- 'ccask — ask Claude a one-shot question about your saved chats (headless; no new conversation).
+  Usage: ccask [-a] [-s] [-r] "<question>" [<chat> ...]
+  -a, --all       search ACROSS ALL your chats — ranks every session by relevance, answers from the
+                  top few, and CITES which chats it used. No need to name a chat. (top N via $CCASK_TOPK, default 5)
+  Otherwise resolves each named chat by name (exact -> substring). By DEFAULT reads the transcript(s) as a compact
   TEXT extract (the raw JSONL is ~97% tool/metadata noise; the extract is ~30x smaller, so it is
   fast) and answers strictly from them — a live spinner shows progress. Best fidelity; sees detail
   that summaries drop. No chats named -> multi-select picker. If the answer is not in the chats it
@@ -180,7 +182,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmonitor [N]'                 'table of recent chats: tokens, age, status'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<name>" [extra]'      'summarise another chat (cached; -r refresh; --file <p>)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<A>" "<B>" …'         'fetch MULTIPLE chats at once (per-chat use/regen, parallel)'
-  printf '  \e[36m%-33s\e[0m %s\n' 'ccask "<q>" [chat …]'          'ask Claude about saved chat(s), headless (reads transcripts; -s = summaries)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccask [-a] "<q>" [chat …]'      'ask Claude about your chats: -a = across ALL (ranked+cited); else named; -s = summaries'
   printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch/ccspec summary cache'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
@@ -898,20 +900,70 @@ _cc_claude_spin() {   # run claude -p "$1" with a live spinner on stderr; echo t
   print -r -- "$out"
 }
 
+_cc_label_for() {   # $1=id $2=jsonl -> display label: mapped name, else first message (short), else short id
+  local id="$1" f="$2" n i prev
+  while IFS=$'\t' read -r n i; do [[ "$i" == "$id" ]] && { print -r -- "$n"; return; }; done < <(_cc_rows)
+  prev=$(grep -m1 '"type":"user"' "$f" 2>/dev/null | grep -oE '"content":"[^"]*"' | head -1 | sed 's/"content":"//; s/"$//')
+  [[ -n $prev ]] && { print -r -- "${prev:0:40}"; return; }
+  print -r -- "${id:0:8}…"
+}
+
+_cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from the top few, cite them
+  local q="$1" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  # query terms: lowercase, keep alphanumeric words >=3 chars that aren't stopwords
+  local -A stop; local w
+  for w in the a an of and or is are was were be to in on at by for from as it its this that with what which when where why who how do does did can could would should will your my our their has have not; do stop[$w]=1; done
+  local -a qwords qt
+  qwords=(${(s: :)${(L)q//[^a-z0-9 ]/ }})
+  for w in $qwords; do [[ ${#w} -ge 3 && -z ${stop[$w]-} ]] && qt+=("$w"); done
+  (( ${#qt} == 0 )) && qt=($qwords)
+  (( ${#qt} == 0 )) && { echo "ask a real question, e.g. ccask -a \"what did we decide about X\""; return 2; }
+  local pat=${(j:|:)qt}
+  local -a files; files=( "$base"/projects/*/*.jsonl(N) )
+  (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"$'…\e[0m'
+  local f sc; local -a scored
+  for f in $files; do
+    sc=$(LC_ALL=C grep -ciE -- "$pat" "$f" 2>/dev/null)
+    (( ${sc:-0} > 0 )) && scored+=("$sc"$'\t'"$f")
+  done
+  (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
+  scored=(${(On)scored})                        # numeric-descending by leading score
+  local K=${CCASK_TOPK:-5}
+  local -a top=(${scored[1,K]})
+  local line sc2 f2 id2 tf lbl; local -a pairs labels
+  for line in "${top[@]}"; do
+    f2=${line#*$'\t'}; id2=${${f2:t}:r}
+    tf=$(_cc_transcript_text "$id2" "$f2")
+    lbl=$(_cc_label_for "$id2" "$f2")
+    pairs+=("$lbl"$'\t'"$tf"); labels+=("$lbl")
+  done
+  print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'
+  local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
+  [[ -z "$excerpts" ]] && { echo "CANNOT ANSWER: found mentions but couldn't extract usable context (is python3 available?)."; return 1; }
+  local prompt out
+  prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
+  out=$(_cc_claude_spin "$prompt")
+  [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
+  print -r -- "$out"
+}
+
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= summary=
+  local refresh= summary= allmode=
   while [[ "${1-}" == -* ]]; do
     case "$1" in
       -r|--refresh) refresh=1; shift ;;
       -s|--summary) summary=1; shift ;;
+      -a|--all)     allmode=1; shift ;;
       *) break ;;
     esac
   done
   local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask [-s] [-r] "<question>" [<chat> ...]'; return 2; }
+  [[ -z $q ]] && { echo 'usage: ccask [-a] [-s] [-r] "<question>" [<chat> ...]'; return 2; }
   shift
+  [[ -n $allmode ]] && { _cc_ask_all "$q"; return; }   # -a: search across ALL chats, cite sources
   local -a chats=("$@")
   if (( ${#chats} == 0 )); then
     if [[ -t 0 && -t 1 ]]; then

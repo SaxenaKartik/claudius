@@ -123,7 +123,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
 | `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
 | `ccfetch` *(no arg)* | Multi-select picker (like `ccimport`): type to filter, **Space** ticks several, **Enter** fetches (Enter on one = single) |
-| `ccask [-s] "<question>" [chat …]` | Ask Claude a one-shot question **about** one or more saved chats — headless, no new conversation. Reads the **full transcript(s)** and answers from them (`-s` = answer from the cheaper cached summaries instead), or replies `CANNOT ANSWER:` if the chats don't cover it. No chats named → multi-select picker. |
+| `ccask [-a] [-s] "<question>" [chat …]` | Ask Claude a one-shot question **about** your saved chats — headless, no new conversation. **`-a` searches across *all* your chats**, ranks them by relevance, answers from the top few, and **cites which chats** it used. Without `-a`, answers from the named/picked chat(s) — reading the **full transcript** (`-s` = the cheaper cached summaries). Replies `CANNOT ANSWER:` if the chats don't cover it. |
 | `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |

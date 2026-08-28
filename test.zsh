@@ -126,6 +126,9 @@ okc "ccask instructs a CANNOT ANSWER fallback" "CANNOT ANSWER" "$out"
 out=$(ccask -s "what did we decide" "Alpha" </dev/null 2>/dev/null); okc "ccask -s uses summaries" "CONVERSATION SUMMARIES" "$out"
 ccask </dev/null >/dev/null 2>&1; okrc "ccask no-question usage exit" 2 $?
 out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No session matching" "$out"
+# -a: cross-chat search over ALL sessions (idU transcript contains 'preview')
+out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
+out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
