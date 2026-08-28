@@ -13,7 +13,7 @@ $ ccresume "Backend Changes"   # resume by name (case-insensitive, substring, ta
 $ ccask -a "how did we fix the DLQ redrive?"   # ← ask across ALL your chats; answers + cites sources
 $ ccbranch "Backend Changes"   # fork the chat's full history into a NEW session
 $ ccmonitor                    # table of chats: tokens, age, working/waiting/inactive
-$ ccimport --all               # name every un-named session (AI-suggested names, Enter to accept)
+$ ccimport --all               # name every un-named session (AI-suggested names, Enter to accept, Esc quits)
 $ ccname                       # what's THIS chat called in the map?
 ```
 
@@ -97,7 +97,7 @@ Uninstall: `sh install.sh --uninstall` (keeps your map file).
 
 Run **`claudius`** anytime to see this walkthrough in your terminal. The typical first run:
 
-1. **`ccimport`** — name your existing sessions in one pass. It **suggests a name** for each (from the chat's first message) — Enter accepts, type to override, `-` skips. Use **`ccimport --all`** to walk through *every* un-named chat; plain `ccimport` opens a multi-select picker (Space ticks).
+1. **`ccimport`** — name your existing sessions in one pass. It **suggests a name** for each (from the chat's first message) — Enter accepts, type to override, `-` skips. Use **`ccimport --all`** to walk through *every* un-named chat (Esc quits at any prompt); plain `ccimport` opens a multi-select picker (Space ticks).
 2. **`cclist`** — browse and resume: type to filter, ↑/↓ to move, Enter to resume.
 3. **`ccresume "My Project"`** — jump straight to a specific chat by name (case-insensitive, substring, tab-completes).
 4. **`ccask -a "<question>"`** — the payoff: ask anything and Claudius searches *all* your past chats, answers, and cites which ones. Or `ccask "<q>" "Chat A" "Chat B"` to scope it. Inside a chat, `/ccask <question>` does the same and lands the context in your session.
@@ -120,7 +120,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccname` | Print THIS chat's name in the map |
 | `ccplay [game]` | Mini games while something runs — **wordle** (dictionary-checked, with a live keyboard tracker), guess, rps, flip, roll, react, math, hangman, scramble, 8ball; no arg = menu |
 | `ccfind "<text>"` | Search names **and** notes |
-| `ccimport [-a]` | Name your un-named sessions, with an **AI-suggested name** per chat (Enter accepts · type to override · `-` skips). No flag = multi-select picker (Space ticks); `-a`/`--all` = walk through every one. Skips throwaway sessions. |
+| `ccimport [-a]` | Name your un-named sessions, with an **AI-suggested name** per chat (Enter accepts · type to override · `-` skips). No flag = multi-select picker (Space ticks); `-a`/`--all` = walk through every one (Esc quits). Skips throwaway sessions. |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
 | `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
