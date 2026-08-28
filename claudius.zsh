@@ -1001,7 +1001,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
-  local N=${#files} t df w ff total; local -a mf; typeset -A score   # declare all once (bare re-decl of a set var prints it in zsh)
+  local N=${#files} t= df= w= ff= total=; local -a mf; typeset -A score   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
   for t in $qt; do
     mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
     df=${#mf}; (( df == 0 )) && continue
