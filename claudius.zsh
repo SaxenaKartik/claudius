@@ -118,7 +118,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Usage: ccnote "<name>" "<new notes>"
   Replaces (does not append) the notes. Refuses ambiguous name matches.';;
     ccimport)  print -r -- 'ccimport — name your UNMAPPED on-disk sessions into the map.
-  Usage: ccimport
+  Usage: ccimport [-a|--all]
+  -a, --all  skip the picker and walk through EVERY unmapped session (Enter accepts each suggestion, "-" skips).
   Multi-select picker of sessions not yet in the map: type to filter, up/down, Space ticks,
   Enter confirms, Esc quits. Preview = date, workspace, first user message. For each pick it
   SUGGESTS a name (via claude, from the chat first message) — Enter accepts it, type to override,
@@ -1221,6 +1222,7 @@ _cc_all_sessions() {
 
 ccimport() {
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccimport; return 0; }
+  local allmode=; [[ "${1-}" == -a || "${1-}" == --all ]] && allmode=1   # --all: name every unmapped session
   local -a ids labels
   local id lbl
   while IFS=$'\t' read -r id lbl; do ids+=("$id"); labels+=("$lbl"); done < <(_cc_all_sessions)
@@ -1231,7 +1233,8 @@ ccimport() {
     return 0
   fi
   local n=${#ids}
-  local -a checked; local i; for (( i=1; i<=n; i++ )); do checked[i]=0; done
+  local -a checked; local i; for (( i=1; i<=n; i++ )); do checked[i]=$([[ -n $allmode ]] && echo 1 || echo 0); done
+  if [[ -z $allmode ]]; then                             # interactive multi-select picker (skipped by --all)
   local filter="" key seq sel=1 drawn=0 cancelled=
   local -a fidx
   local _recompute _draw
@@ -1280,6 +1283,8 @@ ccimport() {
   done
   tput cnorm 2>/dev/null
   [[ -n $cancelled ]] && { print -u2 "cancelled"; return 1; }
+  fi                                                     # end interactive picker (--all pre-checks all)
+  [[ -n $allmode ]] && print -u2 -- $'\e[2mNaming all '"${#ids}"$' unmapped chat(s) — Enter accepts each suggestion · '"'"'-'"'"' skips.\e[0m'
   local added=0 nm
   local -a picks=(); for (( i=1; i<=n; i++ )); do [[ ${checked[i]} == 1 ]] && picks+=($i); done
   (( ${#picks} == 0 )) && { echo "Nothing selected."; return 0; }
