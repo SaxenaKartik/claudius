@@ -33,6 +33,16 @@ _CC_INTERNAL_SIG='You are answering from excerpts of MULTIPLE|Answer the questio
 _cc_is_internal() {   # 0 if $1 is a Claudius-generated headless session (by its first user message)
   grep -m1 '"type":"user"' "$1" 2>/dev/null | grep -qE "$_CC_INTERNAL_SIG"
 }
+_cc_is_ephemeral() {  # 0 if $1 is a throwaway session not worth importing/searching:
+  # a one-shot (<=1 user turn: headless claude -p, slash-command one-off, or abandoned) OR a
+  # "new session seeded with summaries" session. Robust & wording-independent.
+  local nu; nu=$(LC_ALL=C grep -c -m2 '"type":"user"' "$1" 2>/dev/null)
+  (( ${nu:-0} <= 1 )) && return 0
+  local fm; fm=$(grep -m1 '"type":"user"' "$1" 2>/dev/null)
+  print -r -- "$fm" | grep -q "starting a new working session. Below are handoff" && return 0
+  print -r -- "$fm" | grep -qF '<command-name>/cc' && return 0   # session opened with a Claudius slash command
+  return 1
+}
 
 # Portable file-time helpers — macOS/BSD `stat -f` and GNU `stat -c` are incompatible,
 # so prefer zsh's own modules (work identically on macOS, Linux, and WSL).
@@ -984,14 +994,10 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
   # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
   # boilerplate; while here, capture how many query terms hit each chat's FIRST message (its topic).
-  local -a files; local ff0 fum fl t2 nu; typeset -A fmsg
+  local -a files; local ff0 fum fl t2; typeset -A fmsg
   for ff0 in $allfiles; do
-    # Skip Claudius' headless one-shots ROBUSTLY (independent of prompt wording): a ccask/ccfetch
-    # `claude -p` run has exactly ONE user turn; real chats have many. (grep -c -m2 stops early = fast.)
-    nu=$(LC_ALL=C grep -c -m2 '"type":"user"' "$ff0" 2>/dev/null)
-    (( ${nu:-0} <= 1 )) && continue
+    _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
     fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
-    [[ "$fum" == *"starting a new working session. Below are handoff"* ]] && continue   # seeded-summary session
     files+=("$ff0"); fl=${fum:l}; local c=0
     for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
     fmsg[$ff0]=$c
@@ -1328,6 +1334,7 @@ _cc_all_sessions() {
     [[ -z $f ]] && continue
     id=${${f:t}:r}
     (( ${mapped[(I)$id]} )) && continue    # skip already-mapped
+    _cc_is_ephemeral "$f" && continue      # skip Claudius' own one-shots / seeded sessions
     cwd=$(grep -m1 -oE '"cwd":"[^"]*"' "$f" 2>/dev/null | sed 's/"cwd":"//; s/"$//')
     prev=$(grep -m1 '"type":"user"' "$f" 2>/dev/null | grep -oE '"content":"[^"]*"' | head -1 | sed 's/"content":"//; s/"$//')
     mt=$(_cc_mtime_fmt "$f")
