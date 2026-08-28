@@ -94,7 +94,9 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   replies starting "CANNOT ANSWER:" instead of inventing one.
   Flags:
     -s, --summary   answer from the cached handoff summaries instead (fast/cheap, but lossy).
-    -r, --refresh   with -s, regenerate the summaries first.';;
+    -r, --refresh   with -s, regenerate the summaries first.
+  On a TTY the answer is rendered with styling (glow if installed, else a built-in renderer) and
+  then offers to copy the raw markdown to your clipboard. Piped/redirected output stays raw markdown.';;
     cccache)   print -r -- 'cccache — manage the ccfetch/ccspec summary cache.
   Usage:
     cccache [-l|--list]          list cached summaries (TYPE column shows fetch or spec)
@@ -901,6 +903,33 @@ _cc_claude_spin() {   # run claude -p "$1" with a live spinner on stderr; echo t
   print -r -- "$out"
 }
 
+_cc_clipcmd() {   # echo a clipboard command if one exists on this system, else fail
+  if   command -v pbcopy  >/dev/null 2>&1; then print -r -- 'pbcopy'
+  elif command -v wl-copy >/dev/null 2>&1; then print -r -- 'wl-copy'
+  elif command -v xclip   >/dev/null 2>&1; then print -r -- 'xclip -selection clipboard'
+  elif command -v xsel    >/dev/null 2>&1; then print -r -- 'xsel -b'
+  else return 1; fi
+}
+_cc_md_ansi() {   # lightweight markdown -> ANSI renderer (headers, bold, code, bullets)
+  print -r -- "$1" | perl -0777 -pe '
+    s{```[a-zA-Z0-9_-]*\n(.*?)\n?```}{ my $c=$1; $c=~s/^/    /mg; "\e[38;5;79m$c\e[0m" }ges;
+    s/^(#{1,2})\s+(.*)$/\e[1;36m$2\e[0m/mg;
+    s/^#{3,6}\s+(.*)$/\e[1m$1\e[0m/mg;
+    s/\*\*(.+?)\*\*/\e[1m$1\e[0m/g;
+    s/(?<!`)`([^`\n]+)`(?!`)/\e[38;5;214m$1\e[0m/g;
+    s/^(\s*)[-*+]\s+/${1}\e[36m•\e[0m /mg;
+  '
+}
+_cc_present() {   # show a markdown answer with styling on a TTY, then offer to copy the raw markdown
+  local md="$1"
+  [[ -t 1 ]] || { print -r -- "$md"; return; }          # piped/redirected -> raw markdown (unchanged)
+  if command -v glow >/dev/null 2>&1; then print -r -- "$md" | glow -; else _cc_md_ansi "$md"; fi
+  [[ -t 0 ]] || return
+  local clip; clip=$(_cc_clipcmd) || return
+  local yn; print -u2 -n $'\e[2mCopy raw markdown to clipboard? [y/N] \e[0m'; read -k 1 yn; print -u2 ""
+  [[ "${yn:l}" == y ]] && { print -r -- "$md" | eval "$clip" 2>/dev/null && print -u2 -- $'\e[2m✓ copied as markdown\e[0m' || print -u2 -- $'\e[2m(copy failed)\e[0m'; }
+}
+
 _cc_label_for() {   # $1=id $2=jsonl -> display label: mapped name, else first message (short), else short id
   local id="$1" f="$2" n i prev
   while IFS=$'\t' read -r n i; do [[ "$i" == "$id" ]] && { print -r -- "$n"; return; }; done < <(_cc_rows)
@@ -946,7 +975,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
-  print -r -- "$out"
+  _cc_present "$out"
 }
 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
@@ -1002,7 +1031,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   fi
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
-  print -r -- "$out"
+  _cc_present "$out"
 }
 
 ccfetch() {
