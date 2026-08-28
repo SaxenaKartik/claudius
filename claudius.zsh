@@ -837,11 +837,30 @@ _cc_transcript_text() {   # $1=id $2=jsonl -> ensures a compact text extract exi
   local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
   local out="$cdir/$id.text.md"
   mkdir -p "$cdir"
-  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'claudius-extract v2'; then
+  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'claudius-extract v3'; then
     command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
     python3 - "$jsonl" "$out" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
 import sys, json
 src, dst = sys.argv[1], sys.argv[2]
+# v3: keep the CONTEXT that v2 dropped — tool-call INPUTS (the command/query/path you actually ran),
+# tool-result head AND tail (not a blind head cut), and a short slice of thinking. This is what makes
+# ccask able to answer "what was the redrive command / which file / which query" instead of just "[tool: Bash]".
+RES_HEAD, RES_TAIL, THINK_CAP = 1400, 500, 600   # per-block caps; generous but bounded
+# fields worth surfacing from a tool_use input, in rough priority order
+INPUT_KEYS = ("command", "cmd", "query", "q", "pattern", "path", "file_path", "filePath",
+              "url", "prompt", "description", "old_string", "content", "notebook_path")
+def clip(s, n):
+    s = str(s).strip()
+    return s if len(s) <= n else s[:n] + "…"
+def summarize_input(inp):
+    if not isinstance(inp, dict): return clip(inp, 200)
+    picks = []
+    for k in INPUT_KEYS:
+        v = inp.get(k)
+        if v not in (None, ""):
+            picks.append(f"{k}={clip(v, 200)}")
+        if len(picks) >= 3: break
+    return " ".join(picks) or clip(json.dumps(inp, ensure_ascii=False), 200)
 def render(c):
     if isinstance(c, str): return c
     if not isinstance(c, list): return ""
@@ -850,15 +869,23 @@ def render(c):
         if not isinstance(b, dict): continue
         t = b.get("type")
         if t == "text": parts.append(b.get("text", ""))
-        elif t == "tool_use": parts.append(f"[tool: {b.get('name','?')}]")
+        elif t == "thinking":
+            th = str(b.get("thinking", "")).strip()
+            if th: parts.append(f"[thinking: {clip(th, THINK_CAP)}]")
+        elif t == "tool_use":
+            inp = summarize_input(b.get("input", {}))
+            parts.append(f"[tool: {b.get('name','?')}{(' ' + inp) if inp else ''}]")
         elif t == "tool_result":
             r = b.get("content", "")
             if isinstance(r, list): r = " ".join(x.get("text","") for x in r if isinstance(x, dict))
             r = str(r).strip()
-            if r: parts.append(f"[tool result: {r[:1500]}]")
+            if r:
+                if len(r) > RES_HEAD + RES_TAIL + 20:
+                    r = r[:RES_HEAD] + " …[trimmed]… " + r[-RES_TAIL:]   # keep head AND tail
+                parts.append(f"[tool result: {r}]")
     return "\n".join(p for p in parts if p)
 with open(src) as f, open(dst, "w") as w:
-    w.write("<!-- claudius-extract v2 -->\n")
+    w.write("<!-- claudius-extract v3 -->\n")
     for line in f:
         try: o = json.loads(line)
         except Exception: continue
