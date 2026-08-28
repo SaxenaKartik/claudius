@@ -143,6 +143,24 @@ out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No sessi
 # -a: cross-chat search over ALL sessions (idU transcript contains 'preview')
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
+# Phase 2: recency x importance tie-breaker. Two equally-relevant, same-mtime chats; the MAPPED one
+# (importance boost) must rank ahead of the unmapped one. Cleaned up after so later counts hold.
+idZm=cccccccc-0000-0000-0000-00000000ab01   # will be mapped
+idZu=cccccccc-0000-0000-0000-00000000ab02   # left unmapped
+for zid in $idZm $idZu; do
+  pfx=alpha; [[ $zid == $idZu ]] && pfx=beta
+  { print -r -- '{"type":"user","message":{"role":"user","content":"'"$pfx"' zebrawordxyz topic"},"cwd":"'"$WSA"'"}'
+    print -r -- '{"type":"assistant","message":{"role":"assistant","content":"ok"}}'
+    print -r -- '{"type":"user","message":{"role":"user","content":"'"$pfx"' zebrawordxyz more detail"},"cwd":"'"$WSA"'"}'
+  } > "$CLAUDE_CONFIG_DIR/projects/pC/$zid.jsonl"
+done
+touch -t 202601010101 "$CLAUDE_CONFIG_DIR/projects/pC/$idZm.jsonl" "$CLAUDE_CONFIG_DIR/projects/pC/$idZu.jsonl"
+ccadd "Zebra Mapped" "$idZm" >/dev/null
+out=$(ccask -a --context "zebrawordxyz" </dev/null 2>/dev/null)
+im=${out[(i)Zebra Mapped]}; iu=${out[(i)beta zebrawordxyz]}
+if (( im > 0 && iu > 0 && im < iu )); then ((PASS++)); else ((FAIL++)); print "FAIL: mapped chat should outrank equal unmapped (im=$im iu=$iu)"; fi
+ccremove -y "Zebra Mapped" >/dev/null                 # restore map for later count assertions
+rm -f "$CLAUDE_CONFIG_DIR/projects/pC/$idZm.jsonl" "$CLAUDE_CONFIG_DIR/projects/pC/$idZu.jsonl"
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"

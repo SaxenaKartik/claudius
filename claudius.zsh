@@ -1041,12 +1041,26 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     w=$(( N - df + 1 ))
     for ff in $mf; do score[$ff]=$(( ${score[$ff]:-0} + w )); done
   done
-  # Final score: first-message topical match dominates (the chat that's ABOUT the question wins),
-  # body IDF coverage breaks ties.
-  local -a scored=()
+  # Final score (Generative Agents-style): relevance is the dominant signal; RECENCY and IMPORTANCE
+  # are bounded tie-breakers, applied multiplicatively so a clearly-more-relevant chat always still
+  # wins, and they only reorder comparably-relevant chats. recency = smooth decay by age (half-ish
+  # life CCASK_RECENCY_DAYS); importance = you cared enough to NAME the chat (it's in the map).
+  local wr=${CCASK_W_RECENCY:-0.3} wi=${CCASK_W_IMPORTANCE:-0.2} hl=${CCASK_RECENCY_DAYS:-30}
+  zmodload zsh/datetime 2>/dev/null; zmodload zsh/stat 2>/dev/null
+  local now=${EPOCHSECONDS:-0}
+  typeset -A mapped; local -a rows; rows=(${(f)"$(_cc_rows 2>/dev/null)"}); local r rid
+  for r in $rows; do rid=${${(s:	:)r}[2]}; [[ -n $rid ]] && mapped[$rid]=1; done
+  local -a scored=(); local base id3 rec imp final; local -a st
   for ff in $files; do
-    total=$(( ${fmsg[$ff]:-0} * 1000 + ${score[$ff]:-0} ))
-    (( total > 0 )) && scored+=("$total"$'\t'"$ff")
+    base=$(( ${fmsg[$ff]:-0} * 1000 + ${score[$ff]:-0} ))
+    (( base > 0 )) || continue
+    rec=0                                             # recency in (0,1]; 0 if mtime unavailable
+    if st=(); zstat -A st +mtime "$ff" 2>/dev/null && (( now > 0 && st[1] > 0 )); then
+      rec=$(( 1.0 / (1.0 + ((now - st[1]) / 86400.0) / hl) ))
+    fi
+    id3=${${ff:t}:r}; imp=0; [[ -n ${mapped[$id3]-} ]] && imp=1
+    final=$(( base * (1.0 + wr*rec + wi*imp) ))
+    scored+=("$(printf '%013.3f' $final)"$'\t'"$ff")   # zero-pad so lexical sort == numeric sort
   done
   (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
   scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
