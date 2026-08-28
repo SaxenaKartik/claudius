@@ -1,19 +1,20 @@
 # Claudius
 
-**Manage your Claude Code conversations by name** — resume, search, monitor, summarise, and export.
+**Manage your Claude Code conversations by name** — resume, search, monitor, summarise, and **ask questions across all of them**.
 
 Claude Code sessions are just UUIDs. Claudius keeps a tiny Markdown *map* of
 `friendly name → session id` and gives you a set of `cc*` shell commands (plus
 Claude Code slash commands) to work with your conversations by name instead of
-hunting for hex ids.
+hunting for hex ids — and to treat your whole chat history as a searchable memory.
 
 ```
-$ cclist                     # arrow-key picker (type to filter) → resume
-$ ccresume "Backend Changes" # resume by name (case-insensitive, substring, tab-complete)
-$ ccbranch "Backend Changes" # fork the chat's full history into a NEW session
-$ ccmonitor                  # table of chats: tokens, age, working/waiting/inactive
-$ ccfetch  "Backend Changes" # summarise another chat's context (via claude -p)
-$ ccname                     # what's THIS chat called in the map?
+$ cclist                       # arrow-key picker (type to filter) → resume
+$ ccresume "Backend Changes"   # resume by name (case-insensitive, substring, tab-complete)
+$ ccask -a "how did we fix the DLQ redrive?"   # ← ask across ALL your chats; answers + cites sources
+$ ccbranch "Backend Changes"   # fork the chat's full history into a NEW session
+$ ccmonitor                    # table of chats: tokens, age, working/waiting/inactive
+$ ccimport --all               # name every un-named session (AI-suggested names, Enter to accept)
+$ ccname                       # what's THIS chat called in the map?
 ```
 
 > **Requires zsh + Claude Code (`claude` on `PATH`).** The helpers use zsh arrays,
@@ -96,11 +97,12 @@ Uninstall: `sh install.sh --uninstall` (keeps your map file).
 
 Run **`claudius`** anytime to see this walkthrough in your terminal. The typical first run:
 
-1. **`ccimport`** — name your existing Claude Code sessions in one pass (multi-select picker; type to filter, Space to tick, then give each a name).
+1. **`ccimport`** — name your existing sessions in one pass. It **suggests a name** for each (from the chat's first message) — Enter accepts, type to override, `-` skips. Use **`ccimport --all`** to walk through *every* un-named chat; plain `ccimport` opens a multi-select picker (Space ticks).
 2. **`cclist`** — browse and resume: type to filter, ↑/↓ to move, Enter to resume.
 3. **`ccresume "My Project"`** — jump straight to a specific chat by name (case-insensitive, substring, tab-completes).
-4. **Inside a chat** — `/ccname` tells you what the current chat is mapped as (`/ccadd` names it); `/ccfetch <name>` pulls another mapped chat's context into the one you're in.
-5. **`ccbranch "My Project"`** — fetch a chat's *full* history and start a **new** session from it (the original is untouched).
+4. **`ccask -a "<question>"`** — the payoff: ask anything and Claudius searches *all* your past chats, answers, and cites which ones. Or `ccask "<q>" "Chat A" "Chat B"` to scope it. Inside a chat, `/ccask <question>` does the same and lands the context in your session.
+5. **Inside a chat** — `/ccname` tells you what the current chat is mapped as (`/ccadd` names it); `/ccfetch <name>` pulls another mapped chat's context into the one you're in.
+6. **`ccbranch "My Project"`** — fetch a chat's *full* history and start a **new** session from it (the original is untouched).
 
 The map itself is a plain Markdown table at `~/.claude/cc_map.md` (override with `$CC_MAP`) — edit it by hand anytime; every command reads it live.
 
@@ -116,9 +118,9 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccbranch "<name>"` | Fork a chat's full history into a **new** session (original untouched) |
 | `ccname` | Print THIS chat's name in the map |
-| `ccplay [game]` | Mini games while something runs (guess/rps/flip/roll/react/math/hangman/scramble/8ball; no arg = menu) |
+| `ccplay [game]` | Mini games while something runs — **wordle** (dictionary-checked, with a live keyboard tracker), guess, rps, flip, roll, react, math, hangman, scramble, 8ball; no arg = menu |
 | `ccfind "<text>"` | Search names **and** notes |
-| `ccimport` | Multi-select unmapped sessions (type to filter, Space ticks) → name them in |
+| `ccimport [-a]` | Name your un-named sessions, with an **AI-suggested name** per chat (Enter accepts · type to override · `-` skips). No flag = multi-select picker (Space ticks); `-a`/`--all` = walk through every one. Skips throwaway sessions. |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
 | `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
@@ -156,11 +158,13 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 
 - **Map file** (`~/.claude/cc_map.md`, override with `$CC_MAP`) — plain Markdown table you can hand-edit; the commands read it live.
 - **Cross-workspace resume** — finds a session's transcript under any `~/.claude/projects/*/`, reads its real `cwd`, `cd`s there, then `claude --resume <id>`.
-- **Config** — `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CC_MAP` (default `$CLAUDE_CONFIG_DIR/cc_map.md`).
+- **Cross-chat ask (`ccask -a`)** — retrieval is done **locally**: rank every session by relevance (keyword hits, IDF-weighted so rare words like a project name outweigh common ones, plus a boost for chats whose *first message* matches), pull focused excerpts from the top few (round-robin so no single chat hogs the budget), then make **one** `claude -p` call to answer with citations. Transcripts are read from a cached compact text extract (~30× smaller than the raw JSONL), never the whole file.
+- **Clean corpus** — Claudius's own headless `claude -p` runs pass `--no-session-persistence`, so they aren't recorded as chats; ephemeral sessions (one-shots, `ccfetch` seed sessions, slash-command runs) are excluded from search and import; `cccleanup` removes any legacy ones.
+- **Config** — `CLAUDE_CONFIG_DIR` (default `~/.claude`), `CC_MAP` (default `$CLAUDE_CONFIG_DIR/cc_map.md`), `CCASK_TOPK` (how many chats `ccask -a` reads, default 5).
 
 ## Tests
 ```sh
-zsh test.zsh    # isolated sandbox; 118 assertions; exit 0 = all pass
+zsh test.zsh    # isolated sandbox; 150+ assertions; exit 0 = all pass
 ```
 
 ## License
