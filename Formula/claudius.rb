@@ -1,8 +1,8 @@
 class Claudius < Formula
   desc "Manage, resume, and summarise Claude Code conversations by name"
   homepage "https://github.com/SaxenaKartik/claudius"
-  url "https://github.com/SaxenaKartik/claudius/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "4b57f676b523bbe91a9f5df0a8b84592ba7474b8da81fe40542b81e39957ffb1"
+  url "https://github.com/SaxenaKartik/claudius/archive/refs/tags/v1.1.0.tar.gz"
+  sha256 "9af1617680f14b8ed4d55945399093d3492c24d69532c9fd13237611fb0d20e3"
   license "MIT"
 
   def install
