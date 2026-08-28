@@ -15,6 +15,7 @@
 #   ccfetch                       (no arg) multi-select picker — type to filter, Space ticks several, Enter fetches
 #   ccask [-a] "<q>" [chat …]     ask Claude about your chats, headless: -a = across ALL chats (ranked + cited); else named/picked chats; -s = from summaries
 #   cccache [--clear [name]]      list / clear the ccfetch summary cache
+#   cccleanup [-y]                delete Claudius's own headless claude -p runs recorded as chats
 #   ccspec "<name>" [out.md]      write a spec file (goal/decisions/tasks/refs) for a chat
 #   ccexplain "<name>" [extra]    explain a chat in plain terms: Done / Pending / Next
 #   ccexport "<name>" [out.md]    write a context markdown file (overview/what happened/decisions/refs)
@@ -102,6 +103,12 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     cccache [-l|--list]          list cached summaries (TYPE column shows fetch or spec)
     cccache --clear [name]       clear every cache, or only the chat matching <name>
   Flags: -l, --list   list (default);   -c, --clear   clear.';;
+    cccleanup) print -r -- 'cccleanup — delete Claudius'\''s own headless `claude -p` runs that got recorded as chats.
+  Usage: cccleanup [-y]
+  ccfetch/ccask/ccspec/… each run `claude -p`, which used to leave a throwaway session transcript;
+  those clutter your history and pollute ccask -a. This finds them (by their prompt signature in the
+  first message) and deletes them. -y skips the confirm. Going forward Claudius passes
+  --no-session-persistence so no new ones are created.';;
     ccspec)    print -r -- 'ccspec — generate a SPEC document from the transcript of a chat.
   Usage: ccspec [-r] "<name>" [output.md]
   Writes the spec to <output.md> (default ./<slug>.spec.md) AND prints it.
@@ -187,6 +194,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccfetch "<A>" "<B>" …'         'fetch MULTIPLE chats at once (per-chat use/regen, parallel)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccask [-a] "<q>" [chat …]'      'ask Claude about your chats: -a = across ALL (ranked+cited); else named; -s = summaries'
   printf '  \e[36m%-33s\e[0m %s\n' 'cccache [--clear]'             'list / clear the ccfetch/ccspec summary cache'
+  printf '  \e[36m%-33s\e[0m %s\n' 'cccleanup [-y]'                'remove Claudius'\''s own claude -p runs recorded as chats'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexport "<name>" [out.md]'    'write a context markdown file for a chat'
@@ -728,7 +736,7 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
     print -u2 "Generating ${#gen} summary(ies) in parallel…"
     local idx
     for idx in $gen; do
-      ( claude -p "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+      ( claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
     done
     wait
   fi
@@ -779,7 +787,7 @@ _cc_gather_summaries() {   # $1=refresh flag; rest=names. Non-interactive: reuse
     print -u2 "Summarising ${#gen} chat(s)…"
     local idx
     for idx in $gen; do
-      ( claude -p "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary: goal, key decisions/answers, current state, open next steps, important file/CR/ticket references. Short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+      ( claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary: goal, key decisions/answers, current state, open next steps, important file/CR/ticket references. Short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
     done
     wait
   fi
@@ -885,9 +893,9 @@ print("\n\n".join(out))
 PY
 }
 
-_cc_claude_spin() {   # run claude -p "$1" with a live spinner on stderr; echo the answer to stdout
+_cc_claude_spin() {   # run claude -p --no-session-persistence "$1" with a live spinner on stderr; echo the answer to stdout
   local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
-  claude -p "$prompt" > "$tmp" 2>/dev/null &
+  claude -p --no-session-persistence "$prompt" > "$tmp" 2>/dev/null &
   local pid=$! t0=$SECONDS i=0 spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   trap 'kill $pid 2>/dev/null' INT
   if [[ -t 2 ]]; then
@@ -1075,7 +1083,7 @@ ccfetch() {
     [ -z "$src" ] && { echo "usage: ccfetch --file <path.md> [extra]"; return 2; }
     [[ -r "$src" ]] || { echo "File not readable: $src"; return 1; }
     print -u2 "Summarising file $src…"
-    claude -p "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
+    claude -p --no-session-persistence "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
     return
   fi
   # name mode
@@ -1107,7 +1115,7 @@ ccfetch() {
   fi
   print -u2 "Summarising '$match_name' ($match_id)…"
   local out
-  out=$(claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
+  out=$(claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
   [[ -z "$out" ]] && { echo "summary produced no output"; return 1; }
   [[ -z $extra ]] && { mkdir -p "$cdir"; print -r -- "$out" > "$cfile"; }   # cache the canonical summary
   print -r -- "$out"
@@ -1144,6 +1152,28 @@ cccache() {   # manage the ccfetch/ccspec summary cache
   esac
 }
 
+cccleanup() {   # remove Claudius' own headless `claude -p` runs that got recorded as chats
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cccleanup; return 0; }
+  local yes=; [[ "${1-}" == -y || "${1-}" == --yes ]] && yes=1
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  # signatures = the opening text of Claudius-generated prompts (matched on the FIRST user message only)
+  local sig='You are answering from excerpts of MULTIPLE|Answer the question strictly and specifically|Answer the question using ONLY the conversation summaries|Read the following conversation transcript extract|Read the Claude Code session transcript \(JSONL\)|Read the document at.*produce a concise summary|Write a Markdown CONTEXT EXPORT|write a SPEC document in Markdown|explain it in simple, plain terms|Suggest a concise 2'
+  local -a hits; local f fum
+  for f in "$base"/projects/*/*.jsonl(N); do
+    fum=$(grep -m1 '"type":"user"' "$f" 2>/dev/null)
+    print -r -- "$fum" | grep -qE "$sig" && hits+=("$f")
+  done
+  (( ${#hits} == 0 )) && { echo "No Claudius-internal sessions found — nothing to clean."; return 0; }
+  print -u2 -- "Found ${#hits} Claudius-internal (headless claude -p) session(s) recorded as chats."
+  if [[ -z $yes ]]; then
+    print -u2 -n "Delete these transcript files? [y/N] "; local a; read -r a
+    [[ "$a" == [yY]* ]] || { echo "aborted."; return 1; }
+  fi
+  local h n=0
+  for h in $hits; do rm -f -- "$h" && (( n++ )); done
+  echo "Removed $n session file(s). (Future asks won't be recorded — Claudius uses --no-session-persistence.)"
+}
+
 ccspec() {
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccspec; return 0; }
   local refresh= q out
@@ -1169,7 +1199,7 @@ ccspec() {
     command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
     print -u2 "Generating spec for '$match_name' ($match_id)…"
     local gen
-    gen=$(claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
+    gen=$(claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
     [[ -z "$gen" ]] && { echo "spec generation produced no output"; return 1; }
     mkdir -p "$cdir"; print -r -- "$gen" > "$cfile"
   else
@@ -1196,7 +1226,7 @@ ccexplain() {
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   print -u2 "Explaining '$match_name' ($match_id)…"
-  claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
+  claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
 }
 
 ccexport() {
@@ -1218,7 +1248,7 @@ ccexport() {
     out="./${slug}.context.md"
   fi
   print -u2 "Exporting '$match_name' -> $out …"
-  claude -p "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
+  claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
   [[ -s "$out" ]] && echo "Exported: $out" || { echo "export produced no output"; rm -f "$out"; return 1; }
 }
 
@@ -1348,7 +1378,7 @@ ccimport() {
     local idx msg
     for idx in $picks; do
       msg=${labels[idx]##*· }   # the first-message part of the preview label
-      ( claude -p "Suggest a concise 2–5 word Title Case name for a saved coding chat that begins with the message below. Output ONLY the name — no quotes, punctuation, or explanation."$'\n\n'"Message: ${msg}" > "$tmpd/$idx" 2>/dev/null ) &
+      ( claude -p --no-session-persistence "Suggest a concise 2–5 word Title Case name for a saved coding chat that begins with the message below. Output ONLY the name — no quotes, punctuation, or explanation."$'\n\n'"Message: ${msg}" > "$tmpd/$idx" 2>/dev/null ) &
     done
     wait
     for idx in $picks; do
@@ -1485,5 +1515,5 @@ if (( $+functions[compdef] )); then
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache cccleanup
 fi

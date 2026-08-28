@@ -125,6 +125,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccfetch` *(no arg)* | Multi-select picker (like `ccimport`): type to filter, **Space** ticks several, **Enter** fetches (Enter on one = single) |
 | `ccask [-a] [-s] "<question>" [chat …]` | Ask Claude a one-shot question **about** your saved chats — headless, no new conversation. **`-a` searches across *all* your chats**, ranks them by relevance, answers from the top few, and **cites which chats** it used. Without `-a`, answers from the named/picked chat(s) — reading the **full transcript** (`-s` = the cheaper cached summaries). Replies `CANNOT ANSWER:` if the chats don't cover it. On a terminal the answer is **rendered with styling** (via `glow` if installed, else a built-in renderer) and offers to **copy the raw markdown** to your clipboard; piped output stays raw markdown. |
 | `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
+| `cccleanup [-y]` | Delete Claudius's own headless `claude -p` runs that got recorded as chats (they clutter history and pollute `ccask -a`). New asks won't be recorded — Claudius runs `claude -p --no-session-persistence`. |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next |
 | `ccexport "<name>" [out.md]` | Write a context markdown file |
