@@ -143,6 +143,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 - `/ccname` — show the current chat's mapped name
 - `/ccspec [path]` · `/ccexport [path]` — write a spec / context file for the current chat
 - `/ccfetch <name(s)>` — pull one **or several** mapped chats' context into the current session (per-chat use-cached / regenerate; regenerated in parallel via subagents)
+- `/ccask <question>` — answer a question using your **other** chats: retrieves the most relevant excerpts across all your sessions (locally, no nested model call) and answers **in this chat, with citations**
 - `/ccexplain <name>` — explain another mapped chat inline (numbered picker + confirm)
 - `/ccplay [game]` — play a quick game in the chat
 

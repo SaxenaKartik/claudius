@@ -971,6 +971,10 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'
   local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
   [[ -z "$excerpts" ]] && { echo "CANNOT ANSWER: found mentions but couldn't extract usable context (is python3 available?)."; return 1; }
+  if [[ -n ${2-} ]]; then                                 # --context: print material for the caller to answer from
+    print -r -- "### Relevant excerpts from your chats (most relevant: ${(j:, :)labels})"
+    print -r -- "$excerpts"; return 0
+  fi
   local prompt out
   prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
   out=$(_cc_claude_spin "$prompt")
@@ -981,19 +985,20 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= summary= allmode=
+  local refresh= summary= allmode= context=
   while [[ "${1-}" == -* ]]; do
     case "$1" in
       -r|--refresh) refresh=1; shift ;;
       -s|--summary) summary=1; shift ;;
       -a|--all)     allmode=1; shift ;;
+      -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
       *) break ;;
     esac
   done
   local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask [-a] [-s] [-r] "<question>" [<chat> ...]'; return 2; }
+  [[ -z $q ]] && { echo 'usage: ccask [-a] [-s] [-r] [-x] "<question>" [<chat> ...]'; return 2; }
   shift
-  [[ -n $allmode ]] && { _cc_ask_all "$q"; return; }   # -a: search across ALL chats, cite sources
+  [[ -n $allmode ]] && { _cc_ask_all "$q" "$context"; return; }   # -a: search across ALL chats, cite sources
   local -a chats=("$@")
   if (( ${#chats} == 0 )); then
     if [[ -t 0 && -t 1 ]]; then
@@ -1003,12 +1008,13 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
       echo 'ccask: name at least one chat — e.g. ccask "<question>" "Backend Changes"'; return 2
     fi
   fi
-  local prompt out
+  local prompt out ctxmat=
   if [[ -n $summary ]]; then
     # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)
     _CC_ASK_CONTEXT= _CC_ASK_NAMES=()
     _cc_gather_summaries "$refresh" "${chats[@]}" || return 1
     print -u2 -- $'\e[2mAsking (summaries): '"${(j:, :)_CC_ASK_NAMES}"$'…\e[0m'
+    ctxmat=$_CC_ASK_CONTEXT
     prompt="Answer the question using ONLY the conversation summaries below. If they lack the detail to answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing (suggest dropping -s so I read the full transcripts, or -r to refresh). Never invent details."$'\n\n'"QUESTION: $q"$'\n\n'"=== CONVERSATION SUMMARIES ==="$'\n'"$_CC_ASK_CONTEXT"
   else
     # default: extract compact text, RETRIEVE the relevant turns locally (cheap grep/rank), then
@@ -1022,12 +1028,17 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     done
     local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
     if [[ -n "$excerpts" ]]; then
+      ctxmat=$excerpts
       prompt="Answer the question strictly and specifically from the conversation excerpts below — the most relevant turns, pre-selected for you (## USER / ## ASSISTANT). Quote exact formulas, numbers, code line references, and file/CR/ticket identifiers when present. If the excerpts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== RELEVANT EXCERPTS ==="$'\n'"$excerpts"
     else
       # fallback (no python, or no keyword hit): let claude read the extract file(s) itself
       prompt="Read the following conversation transcript extract file(s) (## USER / ## ASSISTANT turns), search them, and answer strictly from their content — quote exact formulas/numbers/ids. If not present, reply beginning 'CANNOT ANSWER:'. Never invent."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'
       for i in {1..${#textfiles}}; do prompt+="- ${_CC_RM_NAMES[i]}: ${textfiles[i]}"$'\n'; done
     fi
+  fi
+  if [[ -n $context ]]; then                              # --context: print material, don't call the model
+    [[ -z "$ctxmat" ]] && { echo "no excerpts retrieved."; return 1; }
+    print -r -- "$ctxmat"; return 0
   fi
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }

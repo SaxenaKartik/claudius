@@ -221,6 +221,7 @@ print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexplain.md" ]]; okrc "/ccexplain installed" 0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexport.md" ]];  okrc "/ccexport installed"  0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccname.md" ]];    okrc "/ccname installed"    0 $?
+[[ -f "$CLAUDE_CONFIG_DIR/commands/ccask.md" ]];     okrc "/ccask installed"     0 $?
 # installer must bake the real map path in (no {MAPPORT} placeholder left behind)
 okn "/ccfetch MAPPORT substituted" "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccfetch.md")"
 okc "/ccfetch has real map path"   "$CC_MAP"   "$(cat "$CLAUDE_CONFIG_DIR/commands/ccfetch.md")"
