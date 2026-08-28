@@ -145,7 +145,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Replaces (does not append) the notes. Refuses ambiguous name matches.';;
     ccimport)  print -r -- 'ccimport — name your UNMAPPED on-disk sessions into the map.
   Usage: ccimport [-a|--all]
-  -a, --all  skip the picker and walk through EVERY unmapped session (Enter accepts each suggestion, "-" skips).
+  -a, --all  skip the picker and walk through EVERY unmapped session (Enter accepts each suggestion, "-" skips, Esc quits).
   Multi-select picker of sessions not yet in the map: type to filter, up/down, Space ticks,
   Enter confirms, Esc quits. Preview = date, workspace, first user message. For each pick it
   SUGGESTS a name (via claude, from the chat first message) — Enter accepts it, type to override,
@@ -1428,19 +1428,29 @@ ccimport() {
     done
     rm -rf "$tmpd"
   fi
+  local idx s key rest seq2 cancelled=
   for idx in $picks; do
     print -u2 -- $'\e[2m'"${labels[idx]}"$'\e[0m'
-    local s=${sugg[$idx]-}
+    s=${sugg[$idx]-}
     if [[ -n $s ]]; then
-      print -n -u2 -- "  Name for ${ids[idx]:0:8}…  suggested "$'\e[36m'"$s"$'\e[0m'"  — Enter accepts · '-' skips · or type your own: "
-      read -r nm
-      [[ -z $nm ]] && nm=$s
+      print -n -u2 -- "  Name for ${ids[idx]:0:8}…  suggested "$'\e[36m'"$s"$'\e[0m'"  — Enter accepts · '-' skips · Esc quits · or type: "
     else
-      read "nm?  Name for ${ids[idx]:0:8}… (blank skips): "
+      print -n -u2 -- "  Name for ${ids[idx]:0:8}…  — type a name · '-'/Enter skips · Esc quits: "
     fi
+    nm=; IFS= read -rsk1 key                              # read one raw key to branch on
+    case "$key" in
+      $'\e') seq2=; read -rsk2 -t 0.3 seq2 2>/dev/null; print -u2 ""
+             [[ -z $seq2 ]] && { cancelled=1; break; }    # lone Esc -> quit the whole run
+             nm='-' ;;                                    # an escape sequence (e.g. arrow) -> skip this one
+      $'\n'|$'\r') print -u2 ""; nm=$s ;;                 # Enter -> accept the suggestion (empty if none)
+      '-') print -u2 -- '-'; nm='-' ;;
+      $'\x7f'|$'\b') print -u2 ""; nm='-' ;;
+      *) print -u2 -n -- "$key"; IFS= read -r rest; nm="$key$rest" ;;   # typed name: echo 1st key, read the rest
+    esac
     [[ "$nm" == "-" || -z $nm ]] && { echo "skipped ${ids[idx]:0:8}"; continue; }
     ccadd "$nm" "${ids[idx]}" && (( added++ ))
   done
+  [[ -n $cancelled ]] && print -u2 -- $'\e[2mcancelled — stopped after naming '"$added"$'.\e[0m'
   echo "Imported $added session(s)."
 }
 
