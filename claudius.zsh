@@ -837,7 +837,7 @@ _cc_transcript_text() {   # $1=id $2=jsonl -> ensures a compact text extract exi
   local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
   local out="$cdir/$id.text.md"
   mkdir -p "$cdir"
-  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'kirous-extract v2'; then
+  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'claudius-extract v2'; then
     command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
     python3 - "$jsonl" "$out" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
 import sys, json
@@ -858,7 +858,7 @@ def render(c):
             if r: parts.append(f"[tool result: {r[:1500]}]")
     return "\n".join(p for p in parts if p)
 with open(src) as f, open(dst, "w") as w:
-    w.write("<!-- kirous-extract v2 -->\n")
+    w.write("<!-- claudius-extract v2 -->\n")
     for line in f:
         try: o = json.loads(line)
         except Exception: continue
