@@ -867,14 +867,17 @@ _cc_ask_excerpts() {   # $1=question $2=budgetChars ; rest = "name<TAB>file" -> 
   command -v python3 >/dev/null 2>&1 || return 1
   python3 - "$@" <<'PY' 2>/dev/null
 import sys, re
+from collections import OrderedDict
 q = sys.argv[1]; budget = int(sys.argv[2]); pairs = sys.argv[3:]
 STOP = set("the a an of in to for and or how does do is are was were be it its this that these those with on at by from as what which when where why who whom about into your my our their has have can could would should will".split())
 terms = [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 3 and w not in STOP]
 terms = list(dict.fromkeys(terms)) or [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 2]
-blocks = []; order = 0
+# collect relevant blocks per chat, preserving the chat order the caller passed (= relevance rank)
+by_chat = OrderedDict(); order = 0
 for pair in pairs:
     if "\t" not in pair: continue
     name, path = pair.split("\t", 1)
+    by_chat.setdefault(name, [])
     try: data = open(path, encoding="utf-8", errors="ignore").read()
     except Exception: continue
     parts = re.split(r"(?m)^(## (?:USER|ASSISTANT))\s*$", data)
@@ -885,17 +888,29 @@ for pair in pairs:
         low = text.lower()
         distinct = sum(1 for t in terms if t in low)
         if distinct:
-            blocks.append((distinct, sum(low.count(t) for t in terms), order, name, text))
-blocks.sort(key=lambda b: (b[0], b[1]), reverse=True)
+            by_chat[name].append((distinct, sum(low.count(t) for t in terms), order, text))
+for name in by_chat: by_chat[name].sort(key=lambda b: (b[0], b[1]), reverse=True)
+# round-robin across chats (best block of chat1, chat2, …, then 2nd-best of each) so every relevant
+# chat is represented and no single noisy chat monopolizes the budget
+names = list(by_chat.keys())
+rr = []
+for r in range(max((len(v) for v in by_chat.values()), default=0)):
+    for name in names:
+        if r < len(by_chat[name]):
+            b = by_chat[name][r]; rr.append((name, b[2], b[3]))
 sel = []; used = 0
-for b in blocks:
-    if used + len(b[4]) > budget and sel: break
-    sel.append(b); used += len(b[4])
-sel.sort(key=lambda b: (b[3], b[2]))
-out = []; cur = None
-for _, _, _, name, text in sel:
-    if name != cur: out.append(f"\n### From chat: {name}\n"); cur = name
-    out.append(text)
+for name, ordr, text in rr:
+    if used + len(text) > budget and sel: continue
+    sel.append((name, ordr, text)); used += len(text)
+    if used >= budget: break
+# output grouped by chat (rank order), blocks in original chronological order
+grouped = OrderedDict((n, []) for n in names)
+for name, ordr, text in sel: grouped[name].append((ordr, text))
+out = []
+for name in names:
+    items = sorted(grouped[name])
+    if not items: continue
+    out.append(f"\n### From chat: {name}\n"); out.extend(t for _, t in items)
 print("\n\n".join(out))
 PY
 }
@@ -986,16 +1001,16 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
-  local N=${#files} t; typeset -A score
+  local N=${#files} t df w ff total; local -a mf; typeset -A score   # declare all once (bare re-decl of a set var prints it in zsh)
   for t in $qt; do
-    local -a mf; mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
-    local df=${#mf}; (( df == 0 )) && continue
-    local w=$(( N - df + 1 )); local ff
+    mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
+    df=${#mf}; (( df == 0 )) && continue
+    w=$(( N - df + 1 ))
     for ff in $mf; do score[$ff]=$(( ${score[$ff]:-0} + w )); done
   done
   # Final score: first-message topical match dominates (the chat that's ABOUT the question wins),
   # body IDF coverage breaks ties.
-  local -a scored=(); local ff total
+  local -a scored=()
   for ff in $files; do
     total=$(( ${fmsg[$ff]:-0} * 1000 + ${score[$ff]:-0} ))
     (( total > 0 )) && scored+=("$total"$'\t'"$ff")
