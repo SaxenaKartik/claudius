@@ -1108,7 +1108,19 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'
   # feed the synonyms into TURN selection too (not just chat ranking), so relevant turns aren't dropped
   local excerpts; excerpts=$(_cc_ask_excerpts "$q ${(j: :)et}" 100000 "${pairs[@]}")
-  [[ -z "$excerpts" ]] && { echo "CANNOT ANSWER: found mentions but couldn't extract usable context (is python3 available?)."; return 1; }
+  if [[ -z "$excerpts" ]]; then
+    if command -v python3 >/dev/null 2>&1; then
+      echo "CANNOT ANSWER: found mentions but couldn't extract usable context."; return 1
+    fi
+    # no python3 -> no local turn-selection; hand the model a capped slice of each top chat instead
+    print -u2 -- $'\e[2m(python3 not found — sending capped transcripts; install python3 for faster, focused retrieval)\e[0m'
+    local pr nm fp
+    for pr in "${pairs[@]}"; do
+      nm=${pr%%$'\t'*}; fp=${pr#*$'\t'}
+      excerpts+=$'\n\n### From chat: '"$nm"$'\n'"$(head -c 20000 "$fp" 2>/dev/null)"
+    done
+    [[ -z ${excerpts// /} ]] && { echo "CANNOT ANSWER: no readable transcripts."; return 1; }
+  fi
   if [[ -n ${2-} ]]; then                                 # --context: print material for the caller to answer from
     print -r -- "### Relevant excerpts from your chats (most relevant: ${(j:, :)labels})"
     print -r -- "$excerpts"; return 0
