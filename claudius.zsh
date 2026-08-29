@@ -973,7 +973,7 @@ _cc_expand_query() {   # $1=query -> prints extra lowercase keywords (synonyms/a
 _cc_slice() {   # $1=id $2=jsonl -> a size-capped slice of the extract to EMBED in a prompt (keeps summaries fast/bounded)
   local ex; ex=$(_cc_transcript_text "$1" "$2")
   print -r -- "(source: $ex)"
-  local max=${CCFETCH_MAXCHARS:-60000} sz; sz=$(wc -c < "$ex" 2>/dev/null); sz=${sz// /}
+  local max=${CCFETCH_MAXCHARS:-100000} sz; sz=$(wc -c < "$ex" 2>/dev/null); sz=${sz// /}
   if [[ -n $sz ]] && (( sz > max )); then          # long chat: keep the head AND the tail (recent state)
     head -c $(( max * 2 / 3 )) "$ex" 2>/dev/null
     print -r -- $'\n\n…[middle trimmed for length]…\n\n'
