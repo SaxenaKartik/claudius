@@ -1270,7 +1270,7 @@ ccfetch() {
   fi
   print -u2 "Summarising '$match_name' ($match_id)…"
   local out
-  out=$(claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
+  out=$(_cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
   [[ -z "$out" ]] && { echo "summary produced no output"; return 1; }
   [[ -z $extra ]] && { mkdir -p "$cdir"; print -r -- "$out" > "$cfile"; }   # cache the canonical summary
   print -r -- "$out"
