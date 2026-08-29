@@ -102,21 +102,21 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about your saved chats (headless; no new conversation).
-  Usage: ccask [-a] [-e] [-s] [-r] "<question>" [<chat> ...]
-  -a, --all       search ACROSS ALL your chats — ranks every session by relevance, answers from the
-                  top few, and CITES which chats it used. No need to name a chat. (top N via $CCASK_TOPK, default 5)
-                  Ranking also breaks near-ties by recency + importance (named/mapped chats rank higher).
-  -e, --expand    (with -a) widen recall: Claude first suggests synonyms/abbreviations for your query
-                  (e.g. "dead-letter queue" -> also "dlq", "redrive") and searches those too — semantic
-                  recall with no embeddings. Adds one quick call. Default via $CCASK_EXPAND=1 (-E disables).
-  Otherwise resolves each named chat by name (exact -> substring). By DEFAULT reads the transcript(s) as a compact
-  TEXT extract (the raw JSONL is ~97% tool/metadata noise; the extract is ~30x smaller, so it is
-  fast) and answers strictly from them — a live spinner shows progress. Best fidelity; sees detail
-  that summaries drop. No chats named -> multi-select picker. If the answer is not in the chats it
-  replies starting "CANNOT ANSWER:" instead of inventing one.
+  Usage: ccask "<question>"                 # DEFAULT: search across ALL your chats
+         ccask -c "<chat>" "<question>"     # ask ONE specific chat (also: ccask "<question>" "<chat>")
+  DEFAULT (no chat named): ranks every session by relevance, breaks near-ties by recency + importance
+  (named/mapped chats rank higher), answers from the top few (via $CCASK_TOPK, default 5) and CITES which
+  chats it used. Query EXPANSION is on by default — Claude first suggests synonyms/abbreviations for your
+  query (e.g. "dead-letter queue" -> also "dlq", "redrive") so it finds chats that used different words;
+  semantic recall with no embeddings. If the answer is not in your chats it replies starting "CANNOT ANSWER:".
+  TARGETED (-c "<chat>", repeatable, or trailing chat names): reads the full transcript of that chat (a compact
+  TEXT extract, ~100x smaller than the raw JSONL) and answers strictly from it — best fidelity for one chat.
   Flags:
-    -s, --summary   answer from the cached handoff summaries instead (fast/cheap, but lossy).
+    -c, --chat <n>  target a specific chat by name (exact -> substring); repeatable.
+    -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
+    -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
     -r, --refresh   with -s, regenerate the summaries first.
+    -a, --all       legacy no-op (cross-chat is now the default).
   On a TTY the answer is rendered with styling (glow if installed, else a built-in renderer) and
   then offers to copy the raw markdown to your clipboard. Piped/redirected output stays raw markdown.';;
     cccache)   print -r -- 'cccache — manage the ccfetch/ccspec summary cache.
@@ -1119,31 +1119,28 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= summary= allmode= context= expand=${CCASK_EXPAND:+1}
+  local refresh= summary= context= expand=1 targeted=; local -a chats=()
+  [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
     case "$1" in
       -r|--refresh) refresh=1; shift ;;
-      -s|--summary) summary=1; shift ;;
-      -a|--all)     allmode=1; shift ;;
-      -e|--expand)  expand=1; shift ;;     # widen recall: let Claude add synonyms/abbrevs before ranking (with -a)
+      -s|--summary) summary=1; targeted=1; shift ;;  # summaries only make sense for named chats
+      -a|--all)     shift ;;                          # back-compat no-op: cross-chat IS the default now
+      -e|--expand)  expand=1; shift ;;
       -E|--no-expand) expand=; shift ;;
+      -c|--chat)    shift; [[ -n ${1-} ]] && { chats+=("$1"); targeted=1; shift; } ;;   # target a specific chat (repeatable)
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
       *) break ;;
     esac
   done
   local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask [-a] [-e] [-s] [-r] [-x] "<question>" [<chat> ...]'; return 2; }
+  [[ -z $q ]] && { echo 'usage: ccask "<question>"            # searches ALL your chats (default)
+       ccask -c "<chat>" "<question>"   # ask ONE specific chat (also: ccask "<question>" "<chat>")
+  flags: -E no synonym expansion · -s from cached summaries (targeted) · -x print context · -a legacy no-op'; return 2; }
   shift
-  [[ -n $allmode ]] && { _cc_ask_all "$q" "$context" "$expand"; return; }   # -a: search across ALL chats, cite sources
-  local -a chats=("$@")
-  if (( ${#chats} == 0 )); then
-    if [[ -t 0 && -t 1 ]]; then
-      _cc_pick_names; case $? in 2) echo 'usage: ccask [-s] [-r] "<question>" [<chat> ...]'; return 2;; 1) return 1;; esac
-      chats=("${_CC_SEL_NAMES[@]}")
-    else
-      echo 'ccask: name at least one chat — e.g. ccask "<question>" "Backend Changes"'; return 2
-    fi
-  fi
+  (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
+  # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
+  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; return; }
   local prompt out ctxmat=
   if [[ -n $summary ]]; then
     # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)

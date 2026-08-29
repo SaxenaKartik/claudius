@@ -38,6 +38,7 @@ print -r -- '{"type":"summary","cwd":"'"$WSB"'","usage":{"output_tokens":12000}}
 } > "$CLAUDE_CONFIG_DIR/projects/pC/$idU.jsonl"
 
 unset CLAUDE_CODE_SESSION_ID   # isolate: don't inherit the real session's id
+export CCASK_EXPAND=0          # deterministic: expansion off by default in tests; -e turns it on explicitly
 _CC_COMPDEF_ARGS=""; compdef(){ _CC_COMPDEF_ARGS+=" $*"; }   # stub accumulates registrations
 source "$CLAUDE_CONFIG_DIR/claudius.zsh"
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }   # stub (overrides PATH); prints all args
@@ -144,6 +145,18 @@ out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No sessi
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
 okn "ccask -a no var-decl leak" "base=" "$out"   # guard the zsh 'bare local of a set var prints it' gotcha
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
+# NEW DEFAULT: no chat named -> cross-chat search (what -a used to require)
+out=$(ccask "preview" </dev/null 2>&1);          okc "ccask default (no name) = cross-chat" "MULTIPLE past coding chats" "$out"
+# TARGETED: -c "<chat>" scopes to one chat (reads its extract, NOT the cross-chat ranker)
+out=$(ccask -c "Alpha" "what did we decide" </dev/null 2>/dev/null)
+okc "ccask -c targets one chat"        ".text.md"  "$out"
+okn "ccask -c is not cross-chat"       "MULTIPLE past coding chats" "$out"
+out=$(ccask -c "nope" "q" </dev/null 2>&1);      okc "ccask -c unknown chat" "No session matching" "$out"
+# default expansion is ON when $CCASK_EXPAND is unset
+claude(){ print -r -- "dlq redrive"; }
+out=$(CCASK_EXPAND= ccask --context "queue failure" </dev/null 2>&1)
+okc "ccask expands by default (CCASK_EXPAND unset)" "synonyms:" "$out"
+claude(){ print -r -- "CLAUDE $* @ $PWD"; }
 # Phase 2: recency x importance tie-breaker. Two equally-relevant, same-mtime chats; the MAPPED one
 # (importance boost) must rank ahead of the unmapped one. Cleaned up after so later counts hold.
 idZm=cccccccc-0000-0000-0000-00000000ab01   # will be mapped
