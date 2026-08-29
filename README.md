@@ -11,6 +11,7 @@ hunting for hex ids — and to treat your whole chat history as a searchable mem
 $ cclist                       # arrow-key picker (type to filter) → resume
 $ ccresume "Backend Changes"   # resume by name (case-insensitive, substring, tab-complete)
 $ ccask -a "how did we fix the DLQ redrive?"   # ← ask across ALL your chats; answers + cites sources
+$ ccask -a -e "dead-letter queue fix"          #   -e widens recall (dlq/redrive synonyms) — no embeddings
 $ ccbranch "Backend Changes"   # fork the chat's full history into a NEW session
 $ ccmonitor                    # table of chats: tokens, age, working/waiting/inactive
 $ ccimport --all               # name every un-named session (AI-suggested names, Enter to accept, Esc quits)
@@ -166,7 +167,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 
 ## Tests
 ```sh
-zsh test.zsh    # isolated sandbox; 150+ assertions; exit 0 = all pass
+zsh test.zsh    # isolated sandbox; 159 assertions; exit 0 = all pass
 ```
 
 ## License
