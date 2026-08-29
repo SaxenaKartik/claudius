@@ -1106,7 +1106,8 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     pairs+=("$lbl"$'\t'"$tf"); labels+=("$lbl")
   done
   print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'
-  local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
+  # feed the synonyms into TURN selection too (not just chat ranking), so relevant turns aren't dropped
+  local excerpts; excerpts=$(_cc_ask_excerpts "$q ${(j: :)et}" 100000 "${pairs[@]}")
   [[ -z "$excerpts" ]] && { echo "CANNOT ANSWER: found mentions but couldn't extract usable context (is python3 available?)."; return 1; }
   if [[ -n ${2-} ]]; then                                 # --context: print material for the caller to answer from
     print -r -- "### Relevant excerpts from your chats (most relevant: ${(j:, :)labels})"
@@ -1175,7 +1176,10 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
       tf=$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")
       textfiles+=("$tf"); pairs+=("${_CC_RM_NAMES[i]}"$'\t'"$tf")
     done
-    local excerpts; excerpts=$(_cc_ask_excerpts "$q" 100000 "${pairs[@]}")
+    # widen which TURNS get picked to match on meaning, not just your exact words (same reason as -a's expansion)
+    local selq="$q"
+    [[ -n $expand ]] && { local exq; exq=$(_cc_expand_query "$q"); [[ -n $exq ]] && selq="$q $exq"; }
+    local excerpts; excerpts=$(_cc_ask_excerpts "$selq" 100000 "${pairs[@]}")
     if [[ -n "$excerpts" ]]; then
       ctxmat=$excerpts
       prompt="Answer the question strictly and specifically from the conversation excerpts below — the most relevant turns, pre-selected for you (## USER / ## ASSISTANT). Quote exact formulas, numbers, code line references, and file/CR/ticket identifiers when present. If the excerpts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== RELEVANT EXCERPTS ==="$'\n'"$excerpts"
