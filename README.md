@@ -9,14 +9,14 @@ Claude Code slash commands) that turn your whole chat history into a **working l
 **fork** a chat's full history into new work, and **resume** any of them by name — no hunting for hex ids.
 
 ```
-$ cclist                       # arrow-key picker (type to filter) → resume
+$ ccask "how did we fix the DLQ redrive?"   # ← ask across ALL your chats (the default); answers + cites sources
+$ ccask -c "Backend Changes" "what did we decide?"   # or scope it to specific chat(s)
+$ ccfetch "Backend Changes"    # pull a past chat's context INTO your current session
+$ ccbranch "Backend Changes"   # fork a chat's full history into a NEW session
 $ ccresume "Backend Changes"   # resume by name (case-insensitive, substring, tab-complete)
-$ ccask "how did we fix the DLQ redrive?"      # ← ask across ALL your chats (the default); answers + cites sources
-$ ccask -c "Backend Changes" "what did we decide?"   # ask ONE specific chat instead
-$ ccbranch "Backend Changes"   # fork the chat's full history into a NEW session
+$ cclist                       # arrow-key picker (type to filter) → resume
 $ ccmonitor                    # table of chats: tokens, age, working/waiting/inactive
-$ ccimport --all               # name every un-named session (AI-suggested names, Enter to accept, Esc quits)
-$ ccname                       # what's THIS chat called in the map?
+$ ccimport --all               # name every un-named session (AI-suggested names; Enter accepts, Esc quits)
 ```
 
 > **Requires zsh + Claude Code (`claude` on `PATH`).** The helpers use zsh arrays,
