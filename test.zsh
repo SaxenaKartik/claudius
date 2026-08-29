@@ -114,17 +114,17 @@ okc "ccmonitor shows token count" "K" "$out"
 
 print "===== ccfetch ====="
 out=$(ccfetch "Alpha");   okc "ccfetch invokes claude -p" " -p " "$out"
-okc "ccfetch passes transcript path" "$idA.jsonl" "$out"
+okc "ccfetch passes transcript path" "$idA.text.md" "$out"
 out=$(ccfetch "nope");    okc "ccfetch no match" "No session matching 'nope'" "$out"
 ccfetch >/dev/null 2>&1;  okrc "ccfetch usage exit" 2 $?
 # Beta Prime not renamed yet here (idB), transcript exists -> resolvable
-out=$(ccfetch "Beta");    okc "ccfetch resolves Beta transcript" "$idB.jsonl" "$out"
+out=$(ccfetch "Beta");    okc "ccfetch resolves Beta transcript" "$idB.text.md" "$out"
 # multi-name mode: 2+ names that ALL resolve -> one combined output with per-chat headers
 out=$(ccfetch "Alpha" "Beta" </dev/null 2>/dev/null)
 okc "ccfetch multi: Alpha header"     "# Alpha"    "$out"
 okc "ccfetch multi: Beta header"      "# Beta"     "$out"
-okc "ccfetch multi: Alpha transcript" "$idA.jsonl" "$out"
-okc "ccfetch multi: Beta transcript"  "$idB.jsonl" "$out"
+okc "ccfetch multi: Alpha transcript" "$idA.text.md" "$out"
+okc "ccfetch multi: Beta transcript"  "$idB.text.md" "$out"
 _cc_all_resolve "Alpha" "Beta"; okrc "_cc_all_resolve all match" 0 $?
 _cc_all_resolve "Alpha" "nope"; okrc "_cc_all_resolve one miss" 1 $?
 _cc_pick_names </dev/null >/dev/null 2>&1; okrc "_cc_pick_names non-TTY -> 2" 2 $?
@@ -206,17 +206,17 @@ claude(){ print -r -- "CLAUDE $* @ $PWD"; }           # restore the generic stub
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
-out=$(ccspec "Alpha" "$spec"); okc "ccspec prints spec to stdout" "$idA.jsonl" "$out"
+out=$(ccspec "Alpha" "$spec"); okc "ccspec prints spec to stdout" "$idA.text.md" "$out"
 err=$(ccspec "Alpha" "$spec" 2>&1 >/dev/null); okc "ccspec reports written on stderr" "spec written: $spec" "$err"
 okc "spec file invoked claude -p" " -p " "$(cat "$spec")"
-okc "spec references transcript" "$idA.jsonl" "$(cat "$spec")"
+okc "spec references transcript" "$idA.text.md" "$(cat "$spec")"
 ( cd "$SB"; ccspec "Beta" >/dev/null ); [[ -f "$SB/beta.spec.md" ]]; okrc "ccspec default path -> <slug>.spec.md" 0 $?
 out=$(ccspec "nope");     okc "ccspec no match" "No session matching 'nope'" "$out"
 ccspec >/dev/null 2>&1;   okrc "ccspec usage exit" 2 $?
 
 print "===== ccexplain ====="
 out=$(ccexplain "Alpha");   okc "ccexplain invokes claude -p" " -p " "$out"
-okc "ccexplain passes transcript path" "$idA.jsonl" "$out"
+okc "ccexplain passes transcript path" "$idA.text.md" "$out"
 out=$(ccexplain "nope");    okc "ccexplain no match" "No session matching 'nope'" "$out"
 ccexplain </dev/null >/dev/null 2>&1; okrc "ccexplain no-arg (non-tty) usage exit" 2 $?
 

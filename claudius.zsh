@@ -738,7 +738,7 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
     [[ -z $match_id ]] && { echo "No session matching '$qq'. Known:"; _cc_plain; return 1; }
     local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
     (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
-    ids+=("$match_id"); names+=("$match_name"); tfs+=("${tf[1]}"); cfiles+=("$cdir/$match_id.fetch.md")
+    ids+=("$match_id"); names+=("$match_name"); tfs+=("$(_cc_transcript_text "$match_id" "${tf[1]}")"); cfiles+=("$cdir/$match_id.fetch.md")
   done
   mkdir -p "$cdir"
   # decide per chat which to (re)generate — announce each; prompt only for cached ones on a TTY
@@ -760,7 +760,7 @@ _cc_fetch_many() {   # $1 = refresh flag ("1" = regenerate all); rest = names
     print -u2 "Generating ${#gen} summary(ies) in parallel…"
     local idx
     for idx in $gen; do
-      ( claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+      ( claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at ${tfs[idx]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
     done
     wait
   fi
@@ -802,7 +802,7 @@ _cc_gather_summaries() {   # $1=refresh flag; rest=names. Non-interactive: reuse
     [[ -z $match_id ]] && { echo "No session matching '$qq'. Known:" >&2; _cc_plain >&2; return 1; }
     local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
     (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)." >&2; return 1; }
-    ids+=("$match_id"); names+=("$match_name"); tfs+=("${tf[1]}"); cfiles+=("$cdir/$match_id.fetch.md")
+    ids+=("$match_id"); names+=("$match_name"); tfs+=("$(_cc_transcript_text "$match_id" "${tf[1]}")"); cfiles+=("$cdir/$match_id.fetch.md")
   done
   mkdir -p "$cdir"
   local i
@@ -811,7 +811,7 @@ _cc_gather_summaries() {   # $1=refresh flag; rest=names. Non-interactive: reuse
     print -u2 "Summarising ${#gen} chat(s)…"
     local idx
     for idx in $gen; do
-      ( claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tfs[idx]} and produce a concise handoff summary: goal, key decisions/answers, current state, open next steps, important file/CR/ticket references. Short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
+      ( claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at ${tfs[idx]} and produce a concise handoff summary: goal, key decisions/answers, current state, open next steps, important file/CR/ticket references. Short bullet points." > "${cfiles[idx]}.tmp" 2>/dev/null && mv -f "${cfiles[idx]}.tmp" "${cfiles[idx]}" || rm -f "${cfiles[idx]}.tmp" ) &
     done
     wait
   fi
@@ -1270,7 +1270,7 @@ ccfetch() {
   fi
   print -u2 "Summarising '$match_name' ($match_id)…"
   local out
-  out=$(claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
+  out=$(claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
   [[ -z "$out" ]] && { echo "summary produced no output"; return 1; }
   [[ -z $extra ]] && { mkdir -p "$cdir"; print -r -- "$out" > "$cfile"; }   # cache the canonical summary
   print -r -- "$out"
@@ -1349,7 +1349,7 @@ ccspec() {
     command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
     print -u2 "Generating spec for '$match_name' ($match_id)…"
     local gen
-    gen=$(claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
+    gen=$(claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
     [[ -z "$gen" ]] && { echo "spec generation produced no output"; return 1; }
     mkdir -p "$cdir"; print -r -- "$gen" > "$cfile"
   else
@@ -1376,7 +1376,7 @@ ccexplain() {
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   print -u2 "Explaining '$match_name' ($match_id)…"
-  claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
+  claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
 }
 
 ccexport() {
@@ -1398,7 +1398,7 @@ ccexport() {
     out="./${slug}.context.md"
   fi
   print -u2 "Exporting '$match_name' -> $out …"
-  claude -p --no-session-persistence "Read the Claude Code session transcript (JSONL) at ${tf[1]} and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
+  claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
   [[ -s "$out" ]] && echo "Exported: $out" || { echo "export produced no output"; rm -f "$out"; return 1; }
 }
 
