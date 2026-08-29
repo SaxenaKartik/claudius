@@ -1079,16 +1079,16 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   local now=${EPOCHSECONDS:-0}
   typeset -A mapped; local -a rows; rows=(${(f)"$(_cc_rows 2>/dev/null)"}); local r rid
   for r in $rows; do rid=${${(s:	:)r}[2]}; [[ -n $rid ]] && mapped[$rid]=1; done
-  local -a scored=(); local base id3 rec imp final; local -a st
+  local -a scored=(); local relbase= id3= rec= imp= final=; local -a st   # NB: 'base' is the dir var above — use relbase here (bare `local base` would PRINT it in zsh)
   for ff in $files; do
-    base=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${score[$ff]:-0} ))   # synonym-in-first-msg = softer topical tier
-    (( base > 0 )) || continue
+    relbase=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${score[$ff]:-0} ))   # synonym-in-first-msg = softer topical tier
+    (( relbase > 0 )) || continue
     rec=0                                             # recency in (0,1]; 0 if mtime unavailable
     if st=(); zstat -A st +mtime "$ff" 2>/dev/null && (( now > 0 && st[1] > 0 )); then
       rec=$(( 1.0 / (1.0 + ((now - st[1]) / 86400.0) / hl) ))
     fi
     id3=${${ff:t}:r}; imp=0; [[ -n ${mapped[$id3]-} ]] && imp=1
-    final=$(( base * (1.0 + wr*rec + wi*imp) ))
+    final=$(( relbase * (1.0 + wr*rec + wi*imp) ))
     scored+=("$(printf '%013.3f' $final)"$'\t'"$ff")   # zero-pad so lexical sort == numeric sort
   done
   (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }

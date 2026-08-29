@@ -142,6 +142,7 @@ ccask </dev/null >/dev/null 2>&1; okrc "ccask no-question usage exit" 2 $?
 out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No session matching" "$out"
 # -a: cross-chat search over ALL sessions (idU transcript contains 'preview')
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
+okn "ccask -a no var-decl leak" "base=" "$out"   # guard the zsh 'bare local of a set var prints it' gotcha
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
 # Phase 2: recency x importance tie-breaker. Two equally-relevant, same-mtime chats; the MAPPED one
 # (importance boost) must rank ahead of the unmapped one. Cleaned up after so later counts hold.
