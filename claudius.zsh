@@ -102,9 +102,13 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about your saved chats (headless; no new conversation).
-  Usage: ccask [-a] [-s] [-r] "<question>" [<chat> ...]
+  Usage: ccask [-a] [-e] [-s] [-r] "<question>" [<chat> ...]
   -a, --all       search ACROSS ALL your chats — ranks every session by relevance, answers from the
                   top few, and CITES which chats it used. No need to name a chat. (top N via $CCASK_TOPK, default 5)
+                  Ranking also breaks near-ties by recency + importance (named/mapped chats rank higher).
+  -e, --expand    (with -a) widen recall: Claude first suggests synonyms/abbreviations for your query
+                  (e.g. "dead-letter queue" -> also "dlq", "redrive") and searches those too — semantic
+                  recall with no embeddings. Adds one quick call. Default via $CCASK_EXPAND=1 (-E disables).
   Otherwise resolves each named chat by name (exact -> substring). By DEFAULT reads the transcript(s) as a compact
   TEXT extract (the raw JSONL is ~97% tool/metadata noise; the extract is ~30x smaller, so it is
   fast) and answers strictly from them — a live spinner shows progress. Best fidelity; sees detail
@@ -952,6 +956,17 @@ print("\n\n".join(out))
 PY
 }
 
+_cc_expand_query() {   # $1=query -> prints extra lowercase keywords (synonyms/abbrevs) for recall; empty on failure
+  local q="$1" out low
+  command -v claude >/dev/null 2>&1 || return
+  print -u2 -- $'\e[2m  expanding query (synonyms)…\e[0m'
+  # borrow Claude's semantic knowledge ONCE to widen recall — no vectors, no embedding model. The
+  # expanded words feed the same local lexical ranker, so "dead-letter queue" also finds "DLQ redrive".
+  out=$(claude -p --no-session-persistence "You expand a search query into extra keywords for searching past engineering chat transcripts. Output ONLY one line of 5 to 12 lowercase space-separated keywords: synonyms, abbreviations, expansions and closely-related technical terms for the query. No punctuation, no explanation, no sentences. Query: $q" 2>/dev/null)
+  out=${out//$'\n'/ }; low=${(L)out}                 # stage lowercase before the substitution (avoids a zsh nested-expansion quirk)
+  print -r -- "${low//[^a-z0-9 ]/ }"
+}
+
 _cc_claude_spin() {   # run claude -p --no-session-persistence "$1" with a live spinner on stderr; echo the answer to stdout
   local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
   claude -p --no-session-persistence "$prompt" > "$tmp" 2>/dev/null &
@@ -1016,26 +1031,40 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   for w in $qwords; do [[ ${#w} -ge 3 && -z ${stop[$w]-} ]] && qt+=("$w"); done
   (( ${#qt} == 0 )) && qt=($qwords)
   (( ${#qt} == 0 )) && { echo "ask a real question, e.g. ccask -a \"what did we decide about X\""; return 2; }
-  local pat=${(j:|:)qt}
+  # -e/--expand ($3): widen recall with Claude-suggested synonyms. These join BODY scoring only —
+  # the first-message topical boost stays anchored on the user's actual words so a loose synonym
+  # can't hijack the top spot.
+  local -a et=()
+  if [[ -n ${3-} ]]; then
+    local exp ew; exp=$(_cc_expand_query "$q")
+    for ew in ${(s: :)exp}; do
+      [[ ${#ew} -ge 3 && -z ${stop[$ew]-} ]] || continue
+      [[ " ${qt[*]} ${et[*]} " == *" $ew "* ]] && continue   # dedupe vs original + already-added
+      et+=("$ew")
+    done
+  fi
+  local -a at=($qt $et)                          # union: used for body IDF scoring
+  local pat=${(j:|:)at}
   local -a allfiles; allfiles=( "$base"/projects/*/*.jsonl(N) )
   (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
   # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
   # boilerplate; while here, capture how many query terms hit each chat's FIRST message (its topic).
-  local -a files; local ff0 fum fl t2; typeset -A fmsg
+  local -a files; local ff0 fum fl t2; typeset -A fmsg smsg
   for ff0 in $allfiles; do
     _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
     fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
-    files+=("$ff0"); fl=${fum:l}; local c=0
+    files+=("$ff0"); fl=${fum:l}; local c=0 cs=0
     for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
-    fmsg[$ff0]=$c
+    for t2 in $et; do [[ "$fl" == *"$t2"* ]] && (( cs++ )); done   # synonym hits in first msg (only with -e)
+    fmsg[$ff0]=$c; smsg[$ff0]=$cs
   done
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
-  print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"$'…\e[0m'
+  print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"${et:+$' \e[0m\e[2m(+ synonyms: '"${(j:, :)et}"$')'}$'…\e[0m'
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
   local N=${#files} t= df= w= ff= total=; local -a mf; typeset -A score   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
-  for t in $qt; do
+  for t in $at; do                              # $at = query terms + any -e synonyms
     mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
     df=${#mf}; (( df == 0 )) && continue
     w=$(( N - df + 1 ))
@@ -1052,7 +1081,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   for r in $rows; do rid=${${(s:	:)r}[2]}; [[ -n $rid ]] && mapped[$rid]=1; done
   local -a scored=(); local base id3 rec imp final; local -a st
   for ff in $files; do
-    base=$(( ${fmsg[$ff]:-0} * 1000 + ${score[$ff]:-0} ))
+    base=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${score[$ff]:-0} ))   # synonym-in-first-msg = softer topical tier
     (( base > 0 )) || continue
     rec=0                                             # recency in (0,1]; 0 if mtime unavailable
     if st=(); zstat -A st +mtime "$ff" 2>/dev/null && (( now > 0 && st[1] > 0 )); then
@@ -1090,20 +1119,22 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= summary= allmode= context=
+  local refresh= summary= allmode= context= expand=${CCASK_EXPAND:+1}
   while [[ "${1-}" == -* ]]; do
     case "$1" in
       -r|--refresh) refresh=1; shift ;;
       -s|--summary) summary=1; shift ;;
       -a|--all)     allmode=1; shift ;;
+      -e|--expand)  expand=1; shift ;;     # widen recall: let Claude add synonyms/abbrevs before ranking (with -a)
+      -E|--no-expand) expand=; shift ;;
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
       *) break ;;
     esac
   done
   local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask [-a] [-s] [-r] [-x] "<question>" [<chat> ...]'; return 2; }
+  [[ -z $q ]] && { echo 'usage: ccask [-a] [-e] [-s] [-r] [-x] "<question>" [<chat> ...]'; return 2; }
   shift
-  [[ -n $allmode ]] && { _cc_ask_all "$q" "$context"; return; }   # -a: search across ALL chats, cite sources
+  [[ -n $allmode ]] && { _cc_ask_all "$q" "$context" "$expand"; return; }   # -a: search across ALL chats, cite sources
   local -a chats=("$@")
   if (( ${#chats} == 0 )); then
     if [[ -t 0 && -t 1 ]]; then

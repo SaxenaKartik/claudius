@@ -161,6 +161,14 @@ im=${out[(i)Zebra Mapped]}; iu=${out[(i)beta zebrawordxyz]}
 if (( im > 0 && iu > 0 && im < iu )); then ((PASS++)); else ((FAIL++)); print "FAIL: mapped chat should outrank equal unmapped (im=$im iu=$iu)"; fi
 ccremove -y "Zebra Mapped" >/dev/null                 # restore map for later count assertions
 rm -f "$CLAUDE_CONFIG_DIR/projects/pC/$idZm.jsonl" "$CLAUDE_CONFIG_DIR/projects/pC/$idZu.jsonl"
+# Phase 4a: -e query expansion. Stub claude to return controlled synonyms; assert they enter the search.
+claude(){ print -r -- "dlq redrive deadletter"; }     # pretend expansion output
+out=$(ccask -a -e --context "queue failure" </dev/null 2>&1)
+okc "ccask -e announces synonyms"   "synonyms:" "$out"
+okc "ccask -e injects a synonym"    "redrive"   "$out"
+out=$(ccask -a --context "queue failure" </dev/null 2>&1)
+okn "ccask without -e -> no synonyms" "synonyms:" "$out"
+claude(){ print -r -- "CLAUDE $* @ $PWD"; }           # restore the generic stub for later tests
 
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
