@@ -970,6 +970,19 @@ _cc_expand_query() {   # $1=query -> prints extra lowercase keywords (synonyms/a
   print -r -- "${low//[^a-z0-9 ]/ }"
 }
 
+_cc_slice() {   # $1=id $2=jsonl -> a size-capped slice of the extract to EMBED in a prompt (keeps summaries fast/bounded)
+  local ex; ex=$(_cc_transcript_text "$1" "$2")
+  print -r -- "(source: $ex)"
+  local max=${CCFETCH_MAXCHARS:-60000} sz; sz=$(wc -c < "$ex" 2>/dev/null); sz=${sz// /}
+  if [[ -n $sz ]] && (( sz > max )); then          # long chat: keep the head AND the tail (recent state)
+    head -c $(( max * 2 / 3 )) "$ex" 2>/dev/null
+    print -r -- $'\n\n…[middle trimmed for length]…\n\n'
+    tail -c $(( max / 3 )) "$ex" 2>/dev/null
+  else
+    cat "$ex" 2>/dev/null
+  fi
+}
+
 _cc_claude_spin() {   # run claude -p --no-session-persistence "$1" with a live spinner on stderr; echo the answer to stdout
   local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
   claude -p --no-session-persistence "$prompt" > "$tmp" 2>/dev/null &
@@ -1270,7 +1283,7 @@ ccfetch() {
   fi
   print -u2 "Summarising '$match_name' ($match_id)…"
   local out
-  out=$(_cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and produce a concise handoff summary of that conversation: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}")
+  out=$(_cc_claude_spin "Produce a concise handoff summary of the conversation transcript below: goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}"$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")")
   [[ -z "$out" ]] && { echo "summary produced no output"; return 1; }
   [[ -z $extra ]] && { mkdir -p "$cdir"; print -r -- "$out" > "$cfile"; }   # cache the canonical summary
   print -r -- "$out"
@@ -1349,7 +1362,7 @@ ccspec() {
     command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
     print -u2 "Generating spec for '$match_name' ($match_id)…"
     local gen
-    gen=$(_cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
+    gen=$(_cc_claude_spin "From the conversation transcript below, write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document."$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")")
     [[ -z "$gen" ]] && { echo "spec generation produced no output"; return 1; }
     mkdir -p "$cdir"; print -r -- "$gen" > "$cfile"
   else
@@ -1376,7 +1389,7 @@ ccexplain() {
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   print -u2 "Explaining '$match_name' ($match_id)…"
-  _cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
+  _cc_claude_spin "From the conversation transcript below, explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")"
 }
 
 ccexport() {
@@ -1398,7 +1411,7 @@ ccexport() {
     out="./${slug}.context.md"
   fi
   print -u2 "Exporting '$match_name' -> $out …"
-  _cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
+  _cc_claude_spin "From the conversation transcript below, write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document."$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")" > "$out"
   [[ -s "$out" ]] && echo "Exported: $out" || { echo "export produced no output"; rm -f "$out"; return 1; }
 }
 
