@@ -1,11 +1,12 @@
 # Claudius
 
-**Manage your Claude Code conversations by name** — resume, search, monitor, summarise, and **ask questions across all of them**.
+**Put your Claude Code history to work** — ask across it, reuse it, fork it, resume it. All by name.
 
 Claude Code sessions are just UUIDs. Claudius keeps a tiny Markdown *map* of
 `friendly name → session id` and gives you a set of `cc*` shell commands (plus
-Claude Code slash commands) to work with your conversations by name instead of
-hunting for hex ids — and to treat your whole chat history as a searchable memory.
+Claude Code slash commands) that turn your whole chat history into a **working layer**:
+**ask** questions across every conversation, **pull** past context into a live session,
+**fork** a chat's full history into new work, and **resume** any of them by name — no hunting for hex ids.
 
 ```
 $ cclist                       # arrow-key picker (type to filter) → resume
