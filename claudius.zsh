@@ -103,7 +103,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about your saved chats (headless; no new conversation).
   Usage: ccask "<question>"                 # DEFAULT: search across ALL your chats
-         ccask -c "<chat>" "<question>"     # ask ONE specific chat (also: ccask "<question>" "<chat>")
+         ccask -c                           # pick chat(s) from a menu, then type your question
+         ccask -c "<chat>" "<question>"     # ask specific chat(s) (repeat -c; also: ccask "<question>" "<chat>")
   DEFAULT (no chat named): ranks every session by relevance, breaks near-ties by recency + importance
   (named/mapped chats rank higher), answers from the top few (via $CCASK_TOPK, default 5) and CITES which
   chats it used. Query EXPANSION is on by default — Claude first suggests synonyms/abbreviations for your
@@ -112,7 +113,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   TARGETED (-c "<chat>", repeatable, or trailing chat names): reads the full transcript of that chat (a compact
   TEXT extract, ~100x smaller than the raw JSONL) and answers strictly from it — best fidelity for one chat.
   Flags:
-    -c, --chat <n>  target a specific chat by name (exact -> substring); repeatable.
+    -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
+                    opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
     -r, --refresh   with -s, regenerate the summaries first.
@@ -551,6 +553,7 @@ _cc_pick_name() {
 # Returns 2 if not a TTY, 1 if cancelled / nothing chosen.
 _cc_pick_names() {
   [[ -t 0 && -t 1 ]] || return 2
+  local title=${1:-Fetch}
   set -A _CC_SEL_NAMES
   local -a names ids
   local name id
@@ -571,7 +574,7 @@ _cc_pick_names() {
   }
   _draw() {
     (( drawn > 0 )) && printf '\e[%dA\r\e[J' "$drawn" >&2
-    printf '\e[1mFetch\e[0m \e[2mfilter:\e[0m %s\e[7m \e[0m \e[2m(type · ↑/↓ · Space tick · Enter · Esc)\e[0m\n' "$filter" >&2
+    printf '\e[1m%s\e[0m \e[2mfilter:\e[0m %s\e[7m \e[0m \e[2m(type · ↑/↓ · Space tick · Enter · Esc)\e[0m\n' "$title" "$filter" >&2
     local shown=1 j real box
     if (( ${#fidx} == 0 )); then
       printf '  \e[2m(no matches)\e[0m\n' >&2; (( shown++ ))
@@ -1119,7 +1122,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= summary= context= expand=1 targeted=; local -a chats=()
+  local refresh= summary= context= expand=1 targeted= pick=; local -a chats=()
   [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
     case "$1" in
@@ -1128,17 +1131,30 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
       -a|--all)     shift ;;                          # back-compat no-op: cross-chat IS the default now
       -e|--expand)  expand=1; shift ;;
       -E|--no-expand) expand=; shift ;;
-      -c|--chat)    shift; [[ -n ${1-} ]] && { chats+=("$1"); targeted=1; shift; } ;;   # target a specific chat (repeatable)
+      -c|--chat)    targeted=1
+                    if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"
+                    else pick=1; shift; fi ;;                                        # bare -c -> open the picker
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
       *) break ;;
     esac
   done
-  local q="${1-}"
-  [[ -z $q ]] && { echo 'usage: ccask "<question>"            # searches ALL your chats (default)
+  local q
+  if [[ -n $pick ]]; then
+    # bare -c: multi-select the chat(s) from the map, THEN type the question
+    _cc_pick_names "Ask"; case $? in 2) echo 'ccask -c needs a terminal — pass a name: ccask -c "<chat>" "<question>"'; return 2;; 1) return 1;; esac
+    chats=("${_CC_SEL_NAMES[@]}")
+    print -u2 -- $'\e[2mAsking: '"${(j:, :)chats}"$'\e[0m'
+    print -u2 -n -- $'\e[1mQuestion:\e[0m '; IFS= read -r q
+    [[ -z $q ]] && { echo "no question — aborted."; return 2; }
+  else
+    q="${1-}"
+    [[ -z $q ]] && { echo 'usage: ccask "<question>"            # searches ALL your chats (default)
+       ccask -c                         # pick chat(s) from a menu, then type your question
        ccask -c "<chat>" "<question>"   # ask ONE specific chat (also: ccask "<question>" "<chat>")
   flags: -E no synonym expansion · -s from cached summaries (targeted) · -x print context · -a legacy no-op'; return 2; }
-  shift
-  (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
+    shift
+    (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
+  fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
   [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; return; }
   local prompt out ctxmat=

@@ -152,6 +152,8 @@ out=$(ccask -c "Alpha" "what did we decide" </dev/null 2>/dev/null)
 okc "ccask -c targets one chat"        ".text.md"  "$out"
 okn "ccask -c is not cross-chat"       "MULTIPLE past coding chats" "$out"
 out=$(ccask -c "nope" "q" </dev/null 2>&1);      okc "ccask -c unknown chat" "No session matching" "$out"
+out=$(ccask -c </dev/null 2>&1);                 okc "ccask -c bare (no TTY) explains picker" "needs a terminal" "$out"
+ccask -c </dev/null >/dev/null 2>&1;             okrc "ccask -c bare non-tty exit" 2 $?
 # default expansion is ON when $CCASK_EXPAND is unset
 claude(){ print -r -- "dlq redrive"; }
 out=$(CCASK_EXPAND= ccask --context "queue failure" </dev/null 2>&1)
