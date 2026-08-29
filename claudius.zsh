@@ -1066,25 +1066,34 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
-  local N=${#files} t= df= w= ff= total=; local -a mf; typeset -A score   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
+  local N=${#files} t= df= w= ff= total=; local -a mf; typeset -A score freq   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
+  local tfmin=${CCASK_FREQ_MIN:-4} tfcap=${CCASK_FREQ_CAP:-25} tline= tfile= tcnt=
   for t in $at; do                              # $at = query terms + any -e synonyms
     mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
     df=${#mf}; (( df == 0 )) && continue
     w=$(( N - df + 1 ))
     for ff in $mf; do score[$ff]=$(( ${score[$ff]:-0} + w )); done
+    # TERM FREQUENCY (Phase 4, topicality): a chat that mentions a term on MANY lines is ABOUT it —
+    # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus,
+    # so lightly-mentioning chats rank exactly as before. `grep -cF` over the matching files gives
+    # per-file line counts in one pass.
+    for tline in ${(f)"$(LC_ALL=C grep -cF -- "$t" $mf 2>/dev/null)"}; do
+      tfile=${tline%:*}; tcnt=${tline##*:}
+      (( tcnt >= tfmin )) && freq[$tfile]=$(( ${freq[$tfile]:-0} + (tcnt < tfcap ? tcnt : tfcap) * w ))
+    done
   done
   # Final score (Generative Agents-style): relevance is the dominant signal; RECENCY and IMPORTANCE
   # are bounded tie-breakers, applied multiplicatively so a clearly-more-relevant chat always still
   # wins, and they only reorder comparably-relevant chats. recency = smooth decay by age (half-ish
   # life CCASK_RECENCY_DAYS); importance = you cared enough to NAME the chat (it's in the map).
-  local wr=${CCASK_W_RECENCY:-0.3} wi=${CCASK_W_IMPORTANCE:-0.2} hl=${CCASK_RECENCY_DAYS:-30}
+  local wr=${CCASK_W_RECENCY:-0.3} wi=${CCASK_W_IMPORTANCE:-0.2} hl=${CCASK_RECENCY_DAYS:-30} wf=${CCASK_W_FREQ:-0.5}
   zmodload zsh/datetime 2>/dev/null; zmodload zsh/stat 2>/dev/null
   local now=${EPOCHSECONDS:-0}
   typeset -A mapped; local -a rows; rows=(${(f)"$(_cc_rows 2>/dev/null)"}); local r rid
   for r in $rows; do rid=${${(s:	:)r}[2]}; [[ -n $rid ]] && mapped[$rid]=1; done
   local -a scored=(); local relbase= id3= rec= imp= final=; local -a st   # NB: 'base' is the dir var above — use relbase here (bare `local base` would PRINT it in zsh)
   for ff in $files; do
-    relbase=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${score[$ff]:-0} ))   # synonym-in-first-msg = softer topical tier
+    relbase=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${freq[$ff]:-0} * wf + ${score[$ff]:-0} ))   # + heavy-mention topicality (Phase 4)
     (( relbase > 0 )) || continue
     rec=0                                             # recency in (0,1]; 0 if mtime unavailable
     if st=(); zstat -A st +mtime "$ff" 2>/dev/null && (( now > 0 && st[1] > 0 )); then

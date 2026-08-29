@@ -154,6 +154,24 @@ okn "ccask -c is not cross-chat"       "MULTIPLE past coding chats" "$out"
 out=$(ccask -c "nope" "q" </dev/null 2>&1);      okc "ccask -c unknown chat" "No session matching" "$out"
 out=$(ccask -c </dev/null 2>&1);                 okc "ccask -c bare (no TTY) explains picker" "needs a terminal" "$out"
 ccask -c </dev/null >/dev/null 2>&1;             okrc "ccask -c bare non-tty exit" 2 $?
+# Phase 4: term-frequency topicality. Two chats, neither mapped, same mtime, term NOT in first message.
+# One mentions "freqzword" on many lines (drifted INTO the topic), the other once -> heavy one ranks first.
+idFH=cccccccc-0000-0000-0000-0000000fac01   # heavy mentions
+idFL=cccccccc-0000-0000-0000-0000000fac02   # single mention
+{ print -r -- '{"type":"user","message":{"role":"user","content":"alpha subject line"},"cwd":"'"$WSA"'"}'
+  for k in 1 2 3 4 5 6; do
+    print -r -- '{"type":"assistant","message":{"role":"assistant","content":"working on freqzword step '"$k"'"}}'
+    print -r -- '{"type":"user","message":{"role":"user","content":"more freqzword detail '"$k"'"},"cwd":"'"$WSA"'"}'
+  done ; } > "$CLAUDE_CONFIG_DIR/projects/pC/$idFH.jsonl"
+{ print -r -- '{"type":"user","message":{"role":"user","content":"beta subject line"},"cwd":"'"$WSA"'"}'
+  print -r -- '{"type":"assistant","message":{"role":"assistant","content":"ok"}}'
+  print -r -- '{"type":"user","message":{"role":"user","content":"one freqzword mention"},"cwd":"'"$WSA"'"}'
+} > "$CLAUDE_CONFIG_DIR/projects/pC/$idFL.jsonl"
+touch -t 202601010101 "$CLAUDE_CONFIG_DIR/projects/pC/$idFH.jsonl" "$CLAUDE_CONFIG_DIR/projects/pC/$idFL.jsonl"
+out=$(ccask -x "freqzword" </dev/null 2>/dev/null)
+ih=${out[(i)alpha subject line]}; il=${out[(i)beta subject line]}
+if (( ih > 0 && il > 0 && ih < il )); then ((PASS++)); else ((FAIL++)); print "FAIL: heavy-mention chat should outrank single-mention (ih=$ih il=$il)"; fi
+rm -f "$CLAUDE_CONFIG_DIR/projects/pC/$idFH.jsonl" "$CLAUDE_CONFIG_DIR/projects/pC/$idFL.jsonl"
 # default expansion is ON when $CCASK_EXPAND is unset
 claude(){ print -r -- "dlq redrive"; }
 out=$(CCASK_EXPAND= ccask --context "queue failure" </dev/null 2>&1)
