@@ -1238,7 +1238,7 @@ ccfetch() {
     [ -z "$src" ] && { echo "usage: ccfetch --file <path.md> [extra]"; return 2; }
     [[ -r "$src" ]] || { echo "File not readable: $src"; return 1; }
     print -u2 "Summarising file $src…"
-    claude -p --no-session-persistence "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
+    _cc_claude_spin "Read the document at $src and produce a concise summary in short bullet points: goal/context, key decisions, current state, open next steps, important references. ${extra}"
     return
   fi
   # name mode
@@ -1349,7 +1349,7 @@ ccspec() {
     command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
     print -u2 "Generating spec for '$match_name' ($match_id)…"
     local gen
-    gen=$(claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
+    gen=$(_cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a SPEC document in Markdown for this work. Sections: '# <Title>', '## Goal / Context', '## Key Decisions', '## Tasks' (as - [ ] / - [x] checkbox items covering the work involved, done vs pending), '## Open Questions', '## References' (files, CRs, tickets, links). Output ONLY the markdown document.")
     [[ -z "$gen" ]] && { echo "spec generation produced no output"; return 1; }
     mkdir -p "$cdir"; print -r -- "$gen" > "$cfile"
   else
@@ -1376,7 +1376,7 @@ ccexplain() {
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   print -u2 "Explaining '$match_name' ($match_id)…"
-  claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
+  _cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"
 }
 
 ccexport() {
@@ -1398,7 +1398,7 @@ ccexport() {
     out="./${slug}.context.md"
   fi
   print -u2 "Exporting '$match_name' -> $out …"
-  claude -p --no-session-persistence "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
+  _cc_claude_spin "Read the Claude Code conversation transcript (compact text extract) at $(_cc_transcript_text "$match_id" "${tf[1]}") and write a Markdown CONTEXT EXPORT for handoff. Sections: '# <Title>', '## Overview', '## What happened' (chronological key points), '## Decisions', '## Current state', '## References' (files, CRs, tickets, links). Output ONLY the markdown document." > "$out"
   [[ -s "$out" ]] && echo "Exported: $out" || { echo "export produced no output"; rm -f "$out"; return 1; }
 }
 
