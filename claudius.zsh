@@ -196,7 +196,6 @@ claudius() {   # getting-started walkthrough
   print -r -- "  map file:      $_CC_MAP"
   print -r -- $'  all commands:  run \e[36mcchelp\e[0m'
   print -r -- $'  in a chat:     /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport'
-  print -r -- $'  \e[2mdocs: https://github.com/SaxenaKartik/claudius\e[0m'
 }
 
 cchelp() {
