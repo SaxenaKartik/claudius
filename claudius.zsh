@@ -182,20 +182,20 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
 
 claudius() {   # getting-started walkthrough
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help claudius; return 0; }
-  print -r -- $'\e[1mClaudius\e[0m \e[2m— manage your Claude Code conversations by name\e[0m'
-  print -r -- $'\e[2mClaude Code sessions are opaque UUIDs; Claudius maps friendly names to them.\e[0m'
+  print -r -- $'\e[1mClaudius\e[0m \e[2m— put your Claude Code history to work: ask across it, reuse it, fork it, resume it.\e[0m'
+  print -r -- $'\e[2mClaude Code sessions are opaque UUIDs; Claudius maps friendly names to them and treats them as a searchable memory.\e[0m'
   print
-  print -r -- $'\e[1mGetting started\e[0m'
-  printf '  \e[2m1.\e[0m \e[36m%-22s\e[0m %s\n' 'ccimport'              'name your existing sessions in one pass (multi-select)'
-  printf '  \e[2m2.\e[0m \e[36m%-22s\e[0m %s\n' 'cclist'                'browse & resume — type to filter · ↑/↓ · Enter'
-  printf '  \e[2m3.\e[0m \e[36m%-22s\e[0m %s\n' 'ccresume "My Project"' 'resume a specific chat by name'
-  printf '  \e[2m4.\e[0m \e[36m%-22s\e[0m %s\n' '/ccname   (in a chat)' 'what'\''s THIS chat called?   (/ccadd to name it)'
-  printf '     \e[36m%-22s\e[0m %s\n'           '/ccfetch  (in a chat)' 'pull another chat'\''s context into the current one'
-  printf '  \e[2m5.\e[0m \e[36m%-22s\e[0m %s\n' 'ccbranch "My Project"' 'fetch a chat'\''s full context, then start a NEW session'
+  print -r -- $'\e[1mTry it\e[0m'
+  printf '  \e[2m1.\e[0m \e[36m%-34s\e[0m %s\n' 'ccask "how did we fix X?"'      'ask across ALL your chats — answered + cited (the payoff)'
+  printf '  \e[2m2.\e[0m \e[36m%-34s\e[0m %s\n' 'ccask -c'                       'pick chat(s) from a menu, then ask just those'
+  printf '  \e[2m3.\e[0m \e[36m%-34s\e[0m %s\n' 'ccfetch "My Project"'           'pull a past chat'\''s context INTO this session   (/ccfetch in a chat)'
+  printf '  \e[2m4.\e[0m \e[36m%-34s\e[0m %s\n' 'ccbranch "My Project"'          'fork a chat'\''s full history into a NEW session'
+  printf '  \e[2m5.\e[0m \e[36m%-34s\e[0m %s\n' 'ccresume "My Project" · cclist' 'resume by name · or the arrow-key picker'
+  printf '  \e[2m6.\e[0m \e[36m%-34s\e[0m %s\n' 'ccimport --all'                 'name your un-named sessions (AI-suggested names)'
   print
   print -r -- "  map file:      $_CC_MAP"
   print -r -- $'  all commands:  run \e[36mcchelp\e[0m'
-  print -r -- $'  in a chat:     /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport'
+  print -r -- $'  in a chat:     /ccask /ccadd /ccname /ccfetch /ccspec /ccexplain /ccexport'
 }
 
 cchelp() {
