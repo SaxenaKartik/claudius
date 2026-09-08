@@ -3,7 +3,7 @@
 # Enable by adding to ~/.zshrc:  source ~/.claude/claudius.zsh
 #
 #   ccname                        print THIS chat's name in the map (uses $CLAUDE_CODE_SESSION_ID)
-#   ccplay [game]                 mini games while Claude thinks (no arg = menu; wordle/guess/rps/flip/roll/react/math/hangman/scramble/8ball)
+#   ccplay [game]                 mini games while Claude thinks (no arg = menu; wordle/typeracer/guess/rps/flip/roll/react/math/hangman/scramble/8ball)
 #   cclist                        interactive picker (type to filter, ↑/↓, Enter resumes, Esc clear/quit; -l = plain list)
 #   ccresume "<name>"             resume by name (exact -> case-insensitive -> substring; no arg opens picker)
 #   ccbranch "<name>"             fork a chat's full history into a NEW session (original untouched)
@@ -174,7 +174,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
     ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
   Usage: ccplay [game]
-  Games: wordle, guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
+  Games: wordle, typeracer, guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
   With no argument, shows the menu.';;
     *)         print -r -- "no help available for '$c'"; return 1;;
   esac
@@ -417,6 +417,35 @@ _ccplay_8ball() {   # magic 8-ball
   local q; read "q?  🎱 ask a yes/no question: " || return 0
   printf '  \e[1m%s\e[0m\n' "${a[RANDOM % ${#a} + 1]}"
 }
+_ccplay_typeracer() {   # TypeRacer — type the shown phrase; scores WPM + accuracy
+  zmodload zsh/datetime 2>/dev/null || { printf '  (typeracer needs the zsh/datetime module)\n'; return 1; }
+  local -a phrases=(
+    "the quick brown fox jumps over the lazy dog"
+    "code is read far more often than it is written"
+    "ship early ship often and iterate on feedback"
+    "simple systems fail in simple ways"
+    "premature optimization is the root of all evil"
+    "make it work make it right then make it fast"
+    "there are two hard things naming and cache invalidation"
+    "a smooth sea never made a skilled sailor"
+    "talk is cheap show me the code"
+    "the best error message is the one that never shows up"
+  )
+  local target=${phrases[RANDOM % ${#phrases} + 1]}
+  print -r -- "  type this line:"
+  print -r -- $'  \e[1;36m'"$target"$'\e[0m'
+  print -n -- $'  \e[2mpress Enter to start…\e[0m'; read -r _
+  local t0=$EPOCHREALTIME typed=
+  print -n -- "  > "; IFS= read -r typed
+  local secs=$(( EPOCHREALTIME - t0 )); (( secs <= 0 )) && secs=0.01
+  local n=${#target} i=0 correct=0
+  for (( i=1; i<=n; i++ )); do [[ "${typed[i]-}" == "${target[i]}" ]] && (( correct++ )); done
+  local acc=$(( 100.0 * correct / n )) wpm=$(( (${#typed} / 5.0) / (secs / 60.0) ))
+  printf '  \e[1m%.0f WPM\e[0m · accuracy \e[1m%.0f%%\e[0m · %.1fs\n' "$wpm" "$acc" "$secs"
+  [[ "$typed" == "$target" ]] && printf '  \e[1;32m✓ perfect!\e[0m\n' \
+                              || printf '  \e[2mtarget: %s\e[0m\n' "$target"
+}
+
 _ccplay_wordle_kb() {   # draw the QWERTY key tracker (reads assoc array `kb` via zsh dynamic scope)
   local -a rows=(qwertyuiop asdfghjkl zxcvbnm) indent=('' '  ' '      ')
   local i c ch out
@@ -482,10 +511,11 @@ _ccplay_wordle() {  # Wordle — 5-letter word, 6 tries, colored tiles + used-le
 }
 ccplay() {   # mini games to pass the time while Claude thinks (no session impact)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccplay; return 0; }
-  local -a games=(wordle guess rps flip roll react math hangman scramble 8ball)
+  local -a games=(wordle typeracer guess rps flip roll react math hangman scramble 8ball)
   typeset -A _cc_g_desc _cc_g_instr
   _cc_g_desc=(
     wordle   "Wordle — guess a 5-letter word in 6 tries (colored tiles)"
+    typeracer "TypeRacer — type the shown line fast; scores WPM + accuracy"
     guess    "Hi-Lo — guess a hidden number 1–100"
     rps      "Rock–paper–scissors vs the computer"
     flip     "Flip a coin"
@@ -498,6 +528,7 @@ ccplay() {   # mini games to pass the time while Claude thinks (no session impac
   )
   _cc_g_instr=(
     wordle   "Guess a real 5-letter word in 6 tries. Tiles: green=right spot · yellow=in word, wrong spot · gray=absent. Used letters dim on the keyboard below. q quits."
+    typeracer "A line appears; press Enter to start the clock, type it, Enter to finish. I score your WPM and accuracy."
     guess    "I picked a number 1–100. Type a guess and Enter; I'll say ↑ higher / ↓ lower. q quits."
     rps      "Type r, p, or s and Enter. I pick secretly, then we compare."
     flip     "Just watch — heads or tails."

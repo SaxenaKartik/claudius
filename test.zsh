@@ -282,6 +282,8 @@ n=$(_cc_rows | wc -l | tr -d ' '); ok "map unchanged by ccadd -h" 4 "$n"
 
 print "===== ccplay wordle ====="
 out=$(ccplay list);                      okc "wordle in games list" "wordle" "$out"
+okc "typeracer in games list" "typeracer" "$out"
+out=$(printf '\nthe quick brown fox jumps over the lazy dog\n' | ccplay typeracer 2>&1); okc "typeracer scores WPM" "WPM" "$out"; okc "typeracer scores accuracy" "accuracy" "$out"
 out=$(printf 'q\n' | ccplay wordle 2>&1); okc "wordle reveals word on quit" "the word was" "$out"
 stripped=$(print -r -- "$out" | perl -pe 's/\e\[[0-9;]*m//g; s/ //g')
 okc "wordle shows the keyboard tracker" "QWERTYUIOP" "$stripped"
