@@ -56,35 +56,43 @@ Runs `--no-session-persistence` (creates no new chat).
 
 ## Ranking (step 4 in detail)
 
-Computed **per term** (yours + synonyms), in two `grep` passes over each chat's **entire history**:
+Computed **per term** (your words + synonyms) by `grep` over each chat's **conversation only** — a
+cached user/assistant-only copy of the transcript (`<id>.conv.jsonl`). Harness-injected content
+(recalled `MEMORY.md`, system-reminders — stored as `attachment` lines) is **excluded**, so a term
+that a memory note repeats in every session doesn't get a falsely-high DF and lose its IDF.
 
 - **DF → IDF presence** — `grep -l` gives *which* chats contain the term (that count is the DF).
-  Rarer term → higher weight `IDF = N − DF + 1`; `redrive` (in 2 of 23 chats → 22) outweighs `fix`
-  (in 20 → 4). Each matching chat gets that weight once.
-- **TF → topicality** — `grep -c` counts the term's matching lines, only in the DF chats. A chat
-  that *dwells* on a term is "about" it — even if its first message wasn't (mid-chat-drift fix).
+  Rarer term → higher weight `IDF = N − DF + 1`; `redrive` (in 2 of 25 chats → 24) outweighs `fix`
+  (in 22 → 4). Each matching chat gets that weight once.
+- **TF → topicality** — `grep -c` counts the term's matching lines. A chat that *dwells* on a term is
+  "about" it even if its first message wasn't (mid-chat-drift fix); counted only above
+  `CCASK_FREQ_MIN`, capped at `CCASK_FREQ_CAP`.
+- **First-message boost, IDF-weighted** — if a term is in a chat's *first message*, add `w × fmult`
+  (`fmult` = `CCASK_FMSG_ORIG` for your words, `CCASK_FMSG_SYN` for synonyms). Because it scales by
+  the term's IDF weight `w`, opening on a **rare topical** word dominates while opening on a **common**
+  word (e.g. "work") barely counts. A handoff / continuation *paste* is not a real opening topic, so
+  it earns no boost — otherwise summary-seeded chats hijack every query.
 
-Presence and frequency combine under **one** rarity weight (not IDF counted twice), plus a
-first-message topical boost and bounded recency/importance tie-breakers:
+Score per chat (with `w = IDF = N − DF + 1`):
 
 ```
-base  = 1000·OpeningExact + 400·OpeningSynonym + Σ_term  IDF · (1 + 0.5·min(TF,25))
+base  = Σ_(term in first msg)  w · fmult   +   Σ_term  IDF · (1 + 0.5·min(TF, CAP))
 final = base × (1 + 0.3·Recency + 0.2·Importance)
 ```
 
 | Component | Weight | Per-chat value | Measures |
 |---|---|---|---|
-| Opening-topic (exact) | ×1000 | count of your **original** terms in the **first message** | "about it from the start" — strongest signal |
-| Opening-topic (synonym) | ×400 | count of **synonyms** in the first message | same idea, softer (a guessed word) |
-| Presence (IDF) | ×1/term | Σ `IDF` (`N−DF+1`) per matched term | contains the term at all, weighted by rarity |
-| Frequency topicality | ×0.5 (`CCASK_W_FREQ`) | Σ `min(TF,25)·IDF` for terms with **TF ≥ `CCASK_FREQ_MIN`** | how much it dwells on the term × rarity |
-| Recency | ×0.3 (`CCASK_W_RECENCY`) | 0–1 decay by chat age | freshness — bounded tie-breaker |
-| Importance | ×0.2 (`CCASK_W_IMPORTANCE`) | 0/1 (named/mapped chat?) | you cared enough to name it — bounded |
+| First-message (exact) | × `CCASK_FMSG_ORIG` (100)/term | Σ `w` for your terms in the first message | opens on the topic — scaled by term rarity |
+| First-message (synonym) | × `CCASK_FMSG_SYN` (40)/term | Σ `w` for synonyms in the first message | same, softer (a guessed word) |
+| Presence (IDF) | ×1/term | Σ `IDF` (`N−DF+1`) per matched term | contains the term, weighted by rarity |
+| Frequency topicality | × `CCASK_W_FREQ` (0.5) | Σ `min(TF,CAP)·IDF` for terms with TF ≥ `CCASK_FREQ_MIN` | how much it dwells on the term × rarity |
+| Recency | × `CCASK_W_RECENCY` (0.3) | 0–1 decay by chat age | freshness — bounded tie-breaker |
+| Importance | × `CCASK_W_IMPORTANCE` (0.2) | 0/1 (named/mapped chat?) | you named it — bounded tie-breaker |
 
-Additive parts (opening-topic, presence, frequency) are the **relevance**; multiplicative parts
+Additive parts (first-message, presence, frequency) are the **relevance**; multiplicative parts
 (recency, importance) are **bounded tie-breakers** (×1.0 → ×1.5) that reorder near-ties without
-overriding relevance. Only importance is 0/1; opening-topic parts are counts (0,1,2,…); recency is
-continuous.
+overriding relevance. The first-message boost being IDF-weighted (not a flat constant) is what keeps
+a common opening word from hijacking the top spot.
 
 ### Recency decay
 
@@ -118,10 +126,11 @@ is unreadable, recency = 0.
 | `CCASK_RECENCY_DAYS` | 30 | recency half-point τ (larger = slower fade) |
 | `CCASK_FREQ_MIN` | 4 | min matching lines before a chat earns a frequency bonus |
 | `CCASK_FREQ_CAP` | 25 | cap on counted matching lines per term |
+| `CCASK_FMSG_ORIG` | 100 | first-message boost per original term (× the term's IDF weight) |
+| `CCASK_FMSG_SYN` | 40 | first-message boost per synonym (× the term's IDF weight) |
 
-Fixed (not env-tunable) tier weights: first-message exact ×1000, first-message synonym ×400, IDF
-presence ×1/term — these set the tier structure (topical-from-start ≫ synonym-topical ≫
-heavy-mention ≫ mere-presence) the env weights sit within.
+IDF presence is a fixed ×1/term. The tier structure (topical-from-start ≫ synonym-topical ≫
+heavy-mention ≫ mere-presence) emerges from these weights times each term's IDF.
 
 Flags: `-c <chat>` target a chat (bare `-c` = picker) · `-s` answer from cached summaries ·
 `-e`/`-E` force expansion on/off · `-r` refresh cache · `-x` print retrieved context.
