@@ -873,6 +873,16 @@ _cc_resolve_many() {   # names -> sets arrays _CC_RM_IDS/_CC_RM_NAMES/_CC_RM_TFS
   return 0
 }
 
+_cc_conv_file() {   # $1=id $2=jsonl -> cached copy with ONLY user/assistant turns; strips harness-injected
+  # memory/system-reminder "attachment" lines. MEMORY.md is injected into EVERY session, so grepping raw
+  # jsonl inflates the document-frequency of your project terms (ccask, claudius, <service names>) and
+  # flattens their IDF to ~0 — ranking on conversation-only lines restores real discrimination.
+  local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
+  local out="$cdir/$id.conv.jsonl"; mkdir -p "$cdir"
+  [[ -s "$out" && ! "$jsonl" -nt "$out" ]] || LC_ALL=C grep -aE '"type":"(user|assistant)"' "$jsonl" 2>/dev/null > "$out"
+  print -r -- "$out"
+}
+
 _cc_transcript_text() {   # $1=id $2=jsonl [$3=query terms] -> prints a compact extract path. With query terms: a query-aware build (keeps result middles matching the question); else the cached generic extract.
   local id="$1" jsonl="$2" qterms="${3-}" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
   mkdir -p "$cdir"
@@ -1144,14 +1154,16 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
   # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
   # boilerplate; cache each chat's FIRST message (topic) and count how many ORIGINAL query terms hit it.
-  local -a files; local ff0 fum fl t2; typeset -A fmsg smsg fumsg
+  local -a files convfiles; local ff0 fum fl t2 cf=; typeset -A fmsg smsg fumsg conv2ff
   _cc_spin_start "scanning chats"
   for ff0 in $allfiles; do
     _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
-    fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
-    files+=("$ff0"); fl=${fum:l}; fumsg[$ff0]=$fl; local c=0
-    for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
-    fmsg[$ff0]=$c
+    fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null); fl=${fum:l}
+    # a handoff / continuation PASTE isn't the chat's real opening topic — blank it so it can't earn the
+    # first-message boost (the chat still ranks on its body). Otherwise summary-seeded chats hijack every query.
+    [[ "$fl" == *"starting a new working session. below are handoff"* || "$fl" == *"this session is being continued from a previous conversation"* ]] && fl=""
+    files+=("$ff0"); fumsg[$ff0]=$fl
+    cf=$(_cc_conv_file "${${ff0:t}:r}" "$ff0"); convfiles+=("$cf"); conv2ff[$cf]=$ff0   # de-noised grep source (no injected memory)
   done
   _cc_spin_stop
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
@@ -1166,7 +1178,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     # can't separate one chat from another. Adapts to the corpus: it's a relative cut, not a fixed threshold.
     local t2= tdf=; local -a dft=()
     for t2 in $qt; do
-      tdf=$(LC_ALL=C grep -lF -- "$t2" $files 2>/dev/null | grep -c .)   # document frequency of this term
+      tdf=$(LC_ALL=C grep -lF -- "$t2" $convfiles 2>/dev/null | grep -c .)   # document frequency (conversation-only)
       dft+=("$(printf '%06d' $tdf):$t2")
     done
     dft=("${(@o)dft}")                                                    # sort ascending by df (rarest first)
@@ -1188,20 +1200,28 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
-  local N=${#files} t= df= w= ff= total=; local -a mf; typeset -A score freq   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
+  local N=${#files} t= df= w= ff= cf= fmult= total=; local -a mf; typeset -A score freq fmscore   # explicit = : a bare re-decl of an already-set var (w/t from earlier loops) prints it in zsh
   local tfmin=${CCASK_FREQ_MIN:-4} tfcap=${CCASK_FREQ_CAP:-25} tline= tfile= tcnt=
+  local fmo=${CCASK_FMSG_ORIG:-100} fms=${CCASK_FMSG_SYN:-40}   # first-message boost per term, IDF-weighted (x w): a common opener like "work" barely counts, a topical one dominates
+  typeset -A issyn; for t in $et; do issyn[$t]=1; done
+  # Grep the CONVERSATION-ONLY copies (convfiles), not raw jsonl, so injected MEMORY.md / reminders
+  # don't inflate df; score/freq stay keyed by the ORIGINAL path via conv2ff.
   for t in $at; do                              # $at = query terms + any -e synonyms
-    mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $files 2>/dev/null)"})
+    mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $convfiles 2>/dev/null)"})
     df=${#mf}; (( df == 0 )) && continue
     w=$(( N - df + 1 ))
-    for ff in $mf; do score[$ff]=$(( ${score[$ff]:-0} + w )); done
+    [[ -n ${issyn[$t]-} ]] && fmult=$fms || fmult=$fmo
+    for cf in $mf; do
+      ff=${conv2ff[$cf]-}; [[ -z $ff ]] && continue; score[$ff]=$(( ${score[$ff]:-0} + w ))
+      [[ "${fumsg[$ff]-}" == *"$t"* ]] && fmscore[$ff]=$(( ${fmscore[$ff]:-0} + w * fmult ))   # IDF-weighted first-message topical boost
+    done
     # TERM FREQUENCY (Phase 4, topicality): a chat that mentions a term on MANY lines is ABOUT it —
-    # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus,
-    # so lightly-mentioning chats rank exactly as before. `grep -cF` over the matching files gives
-    # per-file line counts in one pass.
-    for tline in ${(f)"$(LC_ALL=C grep -cF -- "$t" $mf 2>/dev/null)"}; do
-      tfile=${tline%:*}; tcnt=${tline##*:}
-      (( tcnt >= tfmin )) && freq[$tfile]=$(( ${freq[$tfile]:-0} + (tcnt < tfcap ? tcnt : tfcap) * w ))
+    # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus.
+    # `grep -cF ... /dev/null` forces per-file "path:count" output even for a SINGLE match (grep drops
+    # the filename otherwise), so tfile always maps back via conv2ff.
+    for tline in ${(f)"$(LC_ALL=C grep -cF -- "$t" $mf /dev/null 2>/dev/null)"}; do
+      tfile=${tline%:*}; tcnt=${tline##*:}; ff=${conv2ff[$tfile]-}
+      [[ -n $ff ]] && (( tcnt >= tfmin )) && freq[$ff]=$(( ${freq[$ff]:-0} + (tcnt < tfcap ? tcnt : tfcap) * w ))
     done
   done
   # Final score (Generative Agents-style): relevance is the dominant signal; RECENCY and IMPORTANCE
@@ -1215,7 +1235,8 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   for r in $rows; do rid=${${(s:	:)r}[2]}; [[ -n $rid ]] && mapped[$rid]=1; done
   local -a scored=(); local relbase= id3= rec= imp= final=; local -a st   # NB: 'base' is the dir var above — use relbase here (bare `local base` would PRINT it in zsh)
   for ff in $files; do
-    relbase=$(( ${fmsg[$ff]:-0} * 1000 + ${smsg[$ff]:-0} * 400 + ${freq[$ff]:-0} * wf + ${score[$ff]:-0} ))   # + heavy-mention topicality (Phase 4)
+    relbase=$(( ${fmscore[$ff]:-0} + ${freq[$ff]:-0} * wf + ${score[$ff]:-0} ))   # IDF-weighted first-msg + heavy-mention topicality + presence
+    [[ -n ${CCASK_DBG-} ]] && print -u2 -- "DBG ${${ff:t}:r} sc=${score[$ff]:-0} fq=${freq[$ff]:-0} fm=${fmsg[$ff]:-0} rb=$relbase"
     (( relbase > 0 )) || continue
     rec=0                                             # recency in (0,1]; 0 if mtime unavailable
     if st=(); zstat -A st +mtime "$ff" 2>/dev/null && (( now > 0 && st[1] > 0 )); then
