@@ -870,19 +870,33 @@ _cc_resolve_many() {   # names -> sets arrays _CC_RM_IDS/_CC_RM_NAMES/_CC_RM_TFS
   return 0
 }
 
-_cc_transcript_text() {   # $1=id $2=jsonl -> ensures a compact text extract exists (cached, fresh); prints its path
-  local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
-  local out="$cdir/$id.text.md"
+_cc_transcript_text() {   # $1=id $2=jsonl [$3=query terms] -> prints a compact extract path. With query terms: a query-aware build (keeps result middles matching the question); else the cached generic extract.
+  local id="$1" jsonl="$2" qterms="${3-}" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
   mkdir -p "$cdir"
-  if [[ ! -s "$out" || "$jsonl" -nt "$out" ]] || ! head -1 "$out" 2>/dev/null | grep -q 'claudius-extract v3'; then
-    command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
-    python3 - "$jsonl" "$out" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
-import sys, json
+  local out
+  if [[ -n $qterms ]]; then
+    out="$cdir/$id.q.text.md"                    # query-aware, per-question (rebuilt each ask; NOT the shared cache)
+  else
+    out="$cdir/$id.text.md"
+    if [[ -s "$out" && ! "$jsonl" -nt "$out" ]] && head -1 "$out" 2>/dev/null | grep -q 'claudius-extract v4'; then
+      print -r -- "$out"; return                 # fresh cache hit
+    fi
+  fi
+  command -v python3 >/dev/null 2>&1 || { print -r -- "$jsonl"; return; }   # no python -> fall back to raw file
+  python3 - "$jsonl" "$out" "$qterms" <<'PY' 2>/dev/null || { print -r -- "$jsonl"; return; }
+import sys, json, re
 src, dst = sys.argv[1], sys.argv[2]
+QTERMS = [t for t in re.findall(r"[a-z0-9_]+", (sys.argv[3] if len(sys.argv) > 3 else "").lower()) if len(t) >= 3]
 # v3: keep the CONTEXT that v2 dropped — tool-call INPUTS (the command/query/path you actually ran),
 # tool-result head AND tail (not a blind head cut), and a short slice of thinking. This is what makes
 # ccask able to answer "what was the redrive command / which file / which query" instead of just "[tool: Bash]".
 RES_HEAD, RES_TAIL, THINK_CAP = 1400, 500, 600   # per-block caps; generous but bounded
+# When a result is trimmed, don't blind-drop the middle: keep salient lines from it (loss #2 fix).
+# Query-independent (content heuristics only) so the cached extract stays shared across all questions.
+MID_CAP = 600                                    # max chars of salient middle lines kept per result
+SALIENT = re.compile(r'error|exception|traceback|fail|denied|timeout|cannot|success|cleared|'
+                     r'redriv|complete|arn:|https?://|[A-Za-z]{2,}-[0-9]{2,}|CR-[0-9]+|'
+                     r'\b[0-9]{12}\b|[0-9]+ of [0-9]+', re.I)
 # fields worth surfacing from a tool_use input, in rough priority order
 INPUT_KEYS = ("command", "cmd", "query", "q", "pattern", "path", "file_path", "filePath",
               "url", "prompt", "description", "old_string", "content", "notebook_path")
@@ -918,11 +932,19 @@ def render(c):
             r = str(r).strip()
             if r:
                 if len(r) > RES_HEAD + RES_TAIL + 20:
-                    r = r[:RES_HEAD] + " …[trimmed]… " + r[-RES_TAIL:]   # keep head AND tail
+                    mid, kept, tot = r[RES_HEAD:-RES_TAIL], [], 0       # keep head + salient middle + tail
+                    for ln in mid.splitlines():
+                        if tot >= MID_CAP: break
+                        low = ln.lower()
+                        if SALIENT.search(ln) or (QTERMS and any(t in low for t in QTERMS)):   # query-aware when QTERMS given, salient regex as floor
+                            ln = ln.strip()[:200]
+                            if ln: kept.append(ln); tot += len(ln)
+                    midtxt = " …[middle: " + " | ".join(kept) + "]… " if kept else " …[trimmed]… "
+                    r = r[:RES_HEAD] + midtxt + r[-RES_TAIL:]
                 parts.append(f"[tool result: {r}]")
     return "\n".join(p for p in parts if p)
 with open(src) as f, open(dst, "w") as w:
-    w.write("<!-- claudius-extract v3 -->\n")
+    w.write("<!-- claudius-extract v4 -->\n")
     for line in f:
         try: o = json.loads(line)
         except Exception: continue
@@ -933,7 +955,6 @@ with open(src) as f, open(dst, "w") as w:
         txt = render(m.get("content")).strip()
         if txt: w.write(f"\n## {role.upper()}\n{txt}\n")
 PY
-  fi
   print -r -- "$out"
 }
 
@@ -989,13 +1010,15 @@ print("\n\n".join(out))
 PY
 }
 
-_cc_expand_query() {   # $1=query -> prints extra lowercase keywords (synonyms/abbrevs) for recall; empty on failure
+_cc_expand_query() {   # $1=terms to expand -> prints extra lowercase keywords (synonyms/abbrevs) for recall; empty on failure
   local q="$1" out low
   command -v claude >/dev/null 2>&1 || return
-  print -u2 -- $'\e[2m  expanding query (synonyms)…\e[0m'
   # borrow Claude's semantic knowledge ONCE to widen recall — no vectors, no embedding model. The
   # expanded words feed the same local lexical ranker, so "dead-letter queue" also finds "DLQ redrive".
-  out=$(claude -p --no-session-persistence "You expand a search query into extra keywords for searching past engineering chat transcripts. Output ONLY one line of 5 to 12 lowercase space-separated keywords: synonyms, abbreviations, expansions and closely-related technical terms for the query. No punctuation, no explanation, no sentences. Query: $q" 2>/dev/null)
+  # Caller passes only the HIGH-IDF (discriminating) query words, so we don't waste synonyms on common ones.
+  # expansion is a trivial task -> default to a fast model (override/disable via $CCASK_EXPAND_MODEL; empty = session default)
+  local em=${CCASK_EXPAND_MODEL-haiku}
+  out=$(_cc_claude_spin "You expand search keywords for searching past engineering chat transcripts. Output ONLY one line of 5 to 12 lowercase space-separated keywords: synonyms, abbreviations, expansions and closely-related technical terms for these words. No punctuation, no explanation, no sentences. Keywords: $q" "expanding query (synonyms)" "${em:+--model $em}")
   out=${out//$'\n'/ }; low=${(L)out}                 # stage lowercase before the substitution (avoids a zsh nested-expansion quirk)
   print -r -- "${low//[^a-z0-9 ]/ }"
 }
@@ -1004,23 +1027,31 @@ _cc_slice() {   # $1=id $2=jsonl -> a size-capped slice of the extract to EMBED 
   local ex; ex=$(_cc_transcript_text "$1" "$2")
   print -r -- "(source: $ex)"
   local max=${CCFETCH_MAXCHARS:-100000} sz; sz=$(wc -c < "$ex" 2>/dev/null); sz=${sz// /}
-  if [[ -n $sz ]] && (( sz > max )); then          # long chat: keep the head AND the tail (recent state)
-    head -c $(( max * 2 / 3 )) "$ex" 2>/dev/null
-    print -r -- $'\n\n…[middle trimmed for length]…\n\n'
-    tail -c $(( max / 3 )) "$ex" 2>/dev/null
+  if [[ -n $sz ]] && (( sz > max )); then          # long chat: head + condensed middle + tail (recent state)
+    local hb=$(( max / 2 )) tb=$(( max / 4 )) mb=$(( max / 4 ))   # head + middle-node + tail ≈ max (bounded)
+    head -c $hb "$ex" 2>/dev/null
+    print -r -- $'\n\n…[middle condensed — salient lines only]…\n'
+    # extractive "summary node" of the dropped middle: keep user turns, commands, results, IDs, status lines
+    tail -c +$(( hb + 1 )) "$ex" 2>/dev/null | head -c $(( sz - hb - tb )) \
+      | grep -aiE '^## user|\[tool:|\[tool result:|https?://|arn:|[a-z]{2,}-[0-9]{2,}|error|fail|cannot|redriv|cleared|success' 2>/dev/null \
+      | head -c $mb
+    print -r -- $'\n…[end middle]…\n\n'
+    tail -c $tb "$ex" 2>/dev/null
   else
     cat "$ex" 2>/dev/null
   fi
 }
 
-_cc_claude_spin() {   # run claude -p --no-session-persistence "$1" with a live spinner on stderr; echo the answer to stdout
-  local prompt="$1" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
-  claude -p --no-session-persistence "$prompt" > "$tmp" 2>/dev/null &
+_cc_claude_spin() {   # run claude -p with a live spinner on stderr ($2=label, default "thinking"; $3=extra claude flags); echo the answer to stdout
+  local prompt="$1" lbl="${2:-thinking}" extra="${3-}" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
+  # --strict-mcp-config with no --mcp-config loads ZERO MCP servers: ccask's prompts are pure text (no
+  # tools), so skipping MCP startup cuts per-call latency massively when the user has many MCP servers.
+  claude -p --no-session-persistence --strict-mcp-config ${=extra} "$prompt" > "$tmp" 2>/dev/null &
   local pid=$! t0=$SECONDS i=0 spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   trap 'kill $pid 2>/dev/null' INT
   if [[ -t 2 ]]; then
     while kill -0 $pid 2>/dev/null; do
-      printf '\r\e[2m  %s thinking… %ds  (Ctrl-C to cancel)\e[0m' "${spin[i % ${#spin} + 1]}" "$(( SECONDS - t0 ))" >&2
+      printf '\r\e[2m  %s %s… %ds  (Ctrl-C to cancel)\e[0m' "${spin[i % ${#spin} + 1]}" "$lbl" "$(( SECONDS - t0 ))" >&2
       sleep 0.2; (( i++ ))
     done
     printf '\r\e[2K' >&2
@@ -1029,6 +1060,32 @@ _cc_claude_spin() {   # run claude -p --no-session-persistence "$1" with a live 
   trap - INT
   local out; out=$(< "$tmp"); rm -f "$tmp"
   print -r -- "$out"
+}
+
+# Lightweight background spinner for LOCAL waits (ranking, extract build) — no model call involved.
+_cc_spin_start() {   # $1=label ; animates on stderr until _cc_spin_stop
+  [[ -t 2 ]] || return 0
+  local lbl="${1:-working}"
+  # &! = background AND disown, so the interactive shell prints no "[job] pid" / "terminated" notices
+  { local i=0 spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏' t0=$SECONDS
+    while :; do printf '\r\e[2m  %s %s… %ds\e[0m' "${spin[i % ${#spin} + 1]}" "$lbl" "$(( SECONDS - t0 ))" >&2; sleep 0.2; (( i++ )); done } &!
+  _CC_SPIN_PID=$!
+}
+_cc_spin_stop() {   # stop the background spinner and clear its line
+  [[ -n ${_CC_SPIN_PID-} ]] || return 0
+  kill $_CC_SPIN_PID 2>/dev/null           # disowned, so no "terminated" message and no wait needed
+  printf '\r\e[2K' >&2; unset _CC_SPIN_PID
+}
+_cc_done_line() {   # $1=start EPOCHREALTIME -> prints "✻ claudius · <elapsed> · done <clock>" on stderr
+  [[ -t 2 ]] || return 0
+  zmodload zsh/datetime 2>/dev/null
+  local dt=$(( ${EPOCHREALTIME:-0} - ${1:-0} )) s m el clk
+  s=${dt%.*}; [[ -z $s || $s == -* ]] && s=0
+  m=$(( s / 60 )); s=$(( s % 60 ))
+  if (( m > 0 )); then el="${m}m ${s}s"; else el="${s}s"; fi
+  clk=$(strftime '%I:%M %p' ${EPOCHSECONDS:-0} 2>/dev/null) || clk=$(date '+%I:%M %p' 2>/dev/null)
+  clk=${clk#0}
+  print -u2 -- $'\e[2m✻ claudius · '"$el"$' · done '"$clk"$'\e[0m'
 }
 
 _cc_clipcmd() {   # echo a clipboard command if one exists on this system, else fail
@@ -1077,12 +1134,39 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   for w in $qwords; do [[ ${#w} -ge 3 && -z ${stop[$w]-} ]] && qt+=("$w"); done
   (( ${#qt} == 0 )) && qt=($qwords)
   (( ${#qt} == 0 )) && { echo "ask a real question, e.g. ccask -a \"what did we decide about X\""; return 2; }
-  # -e/--expand ($3): widen recall with Claude-suggested synonyms. These join BODY scoring only —
-  # the first-message topical boost stays anchored on the user's actual words so a loose synonym
-  # can't hijack the top spot.
+  local -a allfiles; allfiles=( "$base"/projects/*/*.jsonl(N) )
+  (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
+  # boilerplate; cache each chat's FIRST message (topic) and count how many ORIGINAL query terms hit it.
+  local -a files; local ff0 fum fl t2; typeset -A fmsg smsg fumsg
+  _cc_spin_start "scanning chats"
+  for ff0 in $allfiles; do
+    _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
+    fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
+    files+=("$ff0"); fl=${fum:l}; fumsg[$ff0]=$fl; local c=0
+    for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
+    fmsg[$ff0]=$c
+  done
+  _cc_spin_stop
+  (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  local N=${#files}
+  # -e/--expand ($3): widen recall with Claude-suggested synonyms — but ONLY for the DISCRIMINATING
+  # (high-IDF) query words. A word in > half the chats can't separate one chat from another, so
+  # expanding it just adds noise; expand only the rare, topical words (df computed up front here).
   local -a et=()
   if [[ -n ${3-} ]]; then
-    local exp ew; exp=$(_cc_expand_query "$q")
+    # Rank the ORIGINAL query terms by document frequency and expand only the RARER HALF (highest IDF) —
+    # the discriminating words. Expanding common words (e.g. "fix"/"update") just adds noise, since they
+    # can't separate one chat from another. Adapts to the corpus: it's a relative cut, not a fixed threshold.
+    local t2= tdf=; local -a dft=()
+    for t2 in $qt; do
+      tdf=$(LC_ALL=C grep -lF -- "$t2" $files 2>/dev/null | grep -c .)   # document frequency of this term
+      dft+=("$(printf '%06d' $tdf):$t2")
+    done
+    dft=("${(@o)dft}")                                                    # sort ascending by df (rarest first)
+    local -a hot=(); local keep=$(( (${#qt} + 1) / 2 )) i2=              # rarer half (ceil)
+    for i2 in {1..$keep}; do hot+=("${dft[i2]#*:}"); done
+    local exp ew; exp=$(_cc_expand_query "${hot[*]}")
     for ew in ${(s: :)exp}; do
       [[ ${#ew} -ge 3 && -z ${stop[$ew]-} ]] || continue
       [[ " ${qt[*]} ${et[*]} " == *" $ew "* ]] && continue   # dedupe vs original + already-added
@@ -1091,21 +1175,10 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   fi
   local -a at=($qt $et)                          # union: used for body IDF scoring
   local pat=${(j:|:)at}
-  local -a allfiles; allfiles=( "$base"/projects/*/*.jsonl(N) )
-  (( ${#allfiles} == 0 )) && { echo "no sessions found on disk."; return 1; }
-  # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
-  # boilerplate; while here, capture how many query terms hit each chat's FIRST message (its topic).
-  local -a files; local ff0 fum fl t2; typeset -A fmsg smsg
-  for ff0 in $allfiles; do
-    _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
-    fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null)
-    files+=("$ff0"); fl=${fum:l}; local c=0 cs=0
-    for t2 in $qt; do [[ "$fl" == *"$t2"* ]] && (( c++ )); done
-    for t2 in $et; do [[ "$fl" == *"$t2"* ]] && (( cs++ )); done   # synonym hits in first msg (only with -e)
-    fmsg[$ff0]=$c; smsg[$ff0]=$cs
-  done
-  (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  # synonym hits in each chat's FIRST message (softer topical tier), now that et is known
+  local cs=; for ff0 in $files; do cs=0; for t2 in $et; do [[ "${fumsg[$ff0]}" == *"$t2"* ]] && (( cs++ )); done; smsg[$ff0]=$cs; done
   print -u2 -- $'\e[2mSearching '"${#files}"$' chats for: '"${(j:, :)qt}"${et:+$' \e[0m\e[2m(+ synonyms: '"${(j:, :)et}"$')'}$'…\e[0m'
+  _cc_spin_start "ranking ${#files} chats"
   # Body relevance by IDF-weighted term coverage: a term in FEW chats (e.g. "slack") is far more
   # discriminative than one in almost every chat (e.g. "there"/"update"). One `grep -l` per term over
   # all files gives both the document-frequency (df) AND which files hit.
@@ -1146,18 +1219,24 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     final=$(( relbase * (1.0 + wr*rec + wi*imp) ))
     scored+=("$(printf '%013.3f' $final)"$'\t'"$ff")   # zero-pad so lexical sort == numeric sort
   done
+  _cc_spin_stop
   (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
   scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
   local K=${CCASK_TOPK:-5}
   local -a top=(${scored[1,K]})
-  local line= sc2= f2= id2= tf= lbl=; local -a pairs labels   # explicit = : bare re-decl of an already-set var prints it in zsh
+  local line= f2= id2= tf=; local -a pairs labels topfiles topids   # explicit = : bare re-decl of an already-set var prints it in zsh
   for line in "${top[@]}"; do
     f2=${line#*$'\t'}; id2=${${f2:t}:r}
-    tf=$(_cc_transcript_text "$id2" "$f2")
-    lbl=$(_cc_label_for "$id2" "$f2")
-    pairs+=("$lbl"$'\t'"$tf"); labels+=("$lbl")
+    topfiles+=("$f2"); topids+=("$id2"); labels+=("$(_cc_label_for "$id2" "$f2")")
   done
-  print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'
+  print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'   # show the chats up front, before the (slower) query-aware build
+  _cc_spin_start "preparing ${#topfiles} chats"
+  local j=
+  for j in {1..${#topfiles}}; do
+    tf=$(_cc_transcript_text "$topids[j]" "$topfiles[j]" "$q ${(j: :)et}")   # query-aware build: keep result middles matching the question/synonyms
+    pairs+=("$labels[j]"$'\t'"$tf")
+  done
+  _cc_spin_stop
   # feed the synonyms into TURN selection too (not just chat ranking), so relevant turns aren't dropped
   local excerpts; excerpts=$(_cc_ask_excerpts "$q ${(j: :)et}" 100000 "${pairs[@]}")
   if [[ -z "$excerpts" ]]; then
@@ -1187,6 +1266,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
+  zmodload zsh/datetime 2>/dev/null; local _t0=${EPOCHREALTIME:-0}   # for the "done" footer
   local refresh= summary= context= expand=1 targeted= pick=; local -a chats=()
   [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
@@ -1221,7 +1301,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
   fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
-  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; return; }
+  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && _cc_done_line $_t0; return $rc; }
   local prompt out ctxmat=
   if [[ -n $summary ]]; then
     # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)
@@ -1235,14 +1315,14 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     # send claude only that focused excerpt — so it answers in seconds, not by grepping a big file.
     _cc_resolve_many "${chats[@]}" || return 1
     print -u2 -- $'\e[2mPreparing '"${#_CC_RM_TFS}"$' transcript(s): '"${(j:, :)_CC_RM_NAMES}"$'…\e[0m'
-    local i; local -a pairs textfiles tf
-    for i in {1..${#_CC_RM_TFS}}; do
-      tf=$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}")
-      textfiles+=("$tf"); pairs+=("${_CC_RM_NAMES[i]}"$'\t'"$tf")
-    done
     # widen which TURNS get picked to match on meaning, not just your exact words (same reason as -a's expansion)
     local selq="$q"
     [[ -n $expand ]] && { local exq; exq=$(_cc_expand_query "$q"); [[ -n $exq ]] && selq="$q $exq"; }
+    local i; local -a pairs textfiles tf
+    for i in {1..${#_CC_RM_TFS}}; do
+      tf=$(_cc_transcript_text "${_CC_RM_IDS[i]}" "${_CC_RM_TFS[i]}" "$selq")   # query-aware build: keep result middles matching the question/synonyms
+      textfiles+=("$tf"); pairs+=("${_CC_RM_NAMES[i]}"$'\t'"$tf")
+    done
     local excerpts; excerpts=$(_cc_ask_excerpts "$selq" 100000 "${pairs[@]}")
     if [[ -n "$excerpts" ]]; then
       ctxmat=$excerpts
@@ -1260,6 +1340,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"
+  _cc_done_line $_t0
 }
 
 ccfetch() {
