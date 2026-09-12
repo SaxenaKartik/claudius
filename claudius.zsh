@@ -1134,7 +1134,11 @@ _cc_copy_offer() {   # offer to copy the raw markdown to the clipboard (TTY + in
 _cc_label_for() {   # $1=id $2=jsonl -> display label: mapped name, else first message (short), else short id
   local id="$1" f="$2" n i prev
   while IFS=$'\t' read -r n i; do [[ "$i" == "$id" ]] && { print -r -- "$n"; return; }; done < <(_cc_rows)
-  prev=$(grep -m1 '"type":"user"' "$f" 2>/dev/null | grep -oE '"content":"[^"]*"' | head -1 | sed 's/"content":"//; s/"$//')
+  # clean the first-message snippet into ONE tidy line: drop escaped/real newlines & tabs, strip leading
+  # markdown noise (---, #, >, *), collapse runs of spaces — so labels never leak "---\n..." fragments.
+  prev=$(grep -m1 '"type":"user"' "$f" 2>/dev/null | grep -oE '"content":"[^"]*"' | head -1 \
+    | sed 's/"content":"//; s/"$//; s/\\[nrt]/ /g' | tr '\n\r\t' '   ' \
+    | sed 's/^[[:space:]#>*_-]*//; s/  */ /g; s/^[[:space:]]*//')
   [[ -n $prev ]] && { print -r -- "${prev:0:40}"; return; }
   print -r -- "${id:0:8}…"
 }
