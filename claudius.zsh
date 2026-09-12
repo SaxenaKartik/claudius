@@ -25,7 +25,18 @@
 #   ccremove [-y] "<name>"        remove a row (confirms; refuses ambiguous matches)
 #   cchelp                        show this usage summary
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
-_CC_MAP="${CC_MAP:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md}"
+# Map resolution: explicit $CC_MAP wins; else the native cc_map.md; else — if that's empty/missing —
+# auto-discover the ccname skill's session-map (so names work with no env var). Glob is generic.
+if [[ -n ${CC_MAP:-} ]]; then
+  _CC_MAP="$CC_MAP"
+else
+  _CC_MAP="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/cc_map.md"
+  if [[ ! -s "$_CC_MAP" ]]; then
+    _cc_sm=( "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/projects/*/memory/reference_conversation_session_map.md(N) )
+    (( ${#_cc_sm} )) && _CC_MAP="${_cc_sm[1]}"
+    unset _cc_sm
+  fi
+fi
 
 # Signature of Claudius' OWN headless `claude -p` runs (matched on a session's FIRST user message).
 # Used to keep them out of ccask's search corpus and to let `cccleanup` delete them.
