@@ -1195,7 +1195,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     # (all absent, or all ubiquitous = a vocabulary gap) do we spend the call. `-e` forces it regardless.
     local t2= tdf=; local -a dft=(); integer useful=0
     for t2 in $qt; do
-      tdf=$(LC_ALL=C grep -lF -- "$t2" $convfiles 2>/dev/null | grep -c .)   # document frequency (conversation-only)
+      tdf=$(LC_ALL=C grep -lFw -- "$t2" $convfiles 2>/dev/null | grep -c .)   # whole-word df (conversation-only): "director" != "directory"
       dft+=("$(printf '%06d' $tdf):$t2")
       (( tdf > 0 && tdf * 2 <= N )) && (( useful++ ))                        # a term that appears AND discriminates
     done
@@ -1230,7 +1230,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Grep the CONVERSATION-ONLY copies (convfiles), not raw jsonl, so injected MEMORY.md / reminders
   # don't inflate df; score/freq stay keyed by the ORIGINAL path via conv2ff.
   for t in $at; do                              # $at = query terms + any -e synonyms
-    mf=(${(f)"$(LC_ALL=C grep -liF -- "$t" $convfiles 2>/dev/null)"})
+    mf=(${(f)"$(LC_ALL=C grep -liFw -- "$t" $convfiles 2>/dev/null)"})   # whole-word match ("director" not "directory")
     df=${#mf}; (( df == 0 )) && continue
     w=$(( N - df + 1 ))
     [[ -n ${issyn[$t]-} ]] && fmult=$fms || fmult=$fmo
@@ -1242,7 +1242,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus.
     # `grep -cF ... /dev/null` forces per-file "path:count" output even for a SINGLE match (grep drops
     # the filename otherwise), so tfile always maps back via conv2ff.
-    for tline in ${(f)"$(LC_ALL=C grep -cF -- "$t" $mf /dev/null 2>/dev/null)"}; do
+    for tline in ${(f)"$(LC_ALL=C grep -cFw -- "$t" $mf /dev/null 2>/dev/null)"}; do
       tfile=${tline%:*}; tcnt=${tline##*:}; ff=${conv2ff[$tfile]-}
       [[ -n $ff ]] && (( tcnt >= tfmin )) && freq[$ff]=$(( ${freq[$ff]:-0} + (tcnt < tfcap ? tcnt : tfcap) * w ))
     done

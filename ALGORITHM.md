@@ -65,7 +65,7 @@ cached user/assistant-only copy of the transcript (`<id>.conv.jsonl`). Harness-i
 (recalled `MEMORY.md`, system-reminders — stored as `attachment` lines) is **excluded**, so a term
 that a memory note repeats in every session doesn't get a falsely-high DF and lose its IDF.
 
-- **DF → IDF presence** — `grep -l` gives *which* chats contain the term (that count is the DF).
+- **DF → IDF presence** — `grep -lw` (whole-word: `director` ≠ `directory`) gives *which* chats contain the term (that count is the DF).
   Rarer term → higher weight `IDF = N − DF + 1`; `redrive` (in 2 of 25 chats → 24) outweighs `fix`
   (in 22 → 4). Each matching chat gets that weight once.
 - **TF → topicality** — `grep -c` counts the term's matching lines. A chat that *dwells* on a term is
