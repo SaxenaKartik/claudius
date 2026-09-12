@@ -1177,23 +1177,31 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # expanding it just adds noise; expand only the rare, topical words (df computed up front here).
   local -a et=()
   if [[ -n ${3-} ]]; then
-    # Rank the ORIGINAL query terms by document frequency and expand only the RARER HALF (highest IDF) —
-    # the discriminating words. Expanding common words (e.g. "fix"/"update") just adds noise, since they
-    # can't separate one chat from another. Adapts to the corpus: it's a relative cut, not a fixed threshold.
-    local t2= tdf=; local -a dft=()
+    # ADAPTIVE EXPANSION: the synonym step is a whole extra (12-45s) model call, and it only helps when
+    # your WORDING differs from the transcript's. So first check locally (one cheap grep pass) whether the
+    # query already has a DISCRIMINATING term that actually appears (0 < df <= N/2). If it does, lexical
+    # ranking will find the right chats on its own -> SKIP the call. Only when NO original term discriminates
+    # (all absent, or all ubiquitous = a vocabulary gap) do we spend the call. `-e` forces it regardless.
+    local t2= tdf=; local -a dft=(); integer useful=0
     for t2 in $qt; do
       tdf=$(LC_ALL=C grep -lF -- "$t2" $convfiles 2>/dev/null | grep -c .)   # document frequency (conversation-only)
       dft+=("$(printf '%06d' $tdf):$t2")
+      (( tdf > 0 && tdf * 2 <= N )) && (( useful++ ))                        # a term that appears AND discriminates
     done
-    dft=("${(@o)dft}")                                                    # sort ascending by df (rarest first)
-    local -a hot=(); local keep=$(( (${#qt} + 1) / 2 )) i2=              # rarer half (ceil)
-    for i2 in {1..$keep}; do hot+=("${dft[i2]#*:}"); done
-    local exp ew; exp=$(_cc_expand_query "${hot[*]}")
-    for ew in ${(s: :)exp}; do
-      [[ ${#ew} -ge 3 && -z ${stop[$ew]-} ]] || continue
-      [[ " ${qt[*]} ${et[*]} " == *" $ew "* ]] && continue   # dedupe vs original + already-added
-      et+=("$ew")
-    done
+    if [[ ${3} != force ]] && (( useful > 0 )); then
+      print -u2 -- $'\e[2m  (your terms already discriminate — skipping synonym expansion; -e to force)\e[0m'
+    else
+      # expand only the RARER HALF (highest IDF) of the query terms — don't waste synonyms on common words
+      dft=("${(@o)dft}")                                                    # sort ascending by df (rarest first)
+      local -a hot=(); local keep=$(( (${#qt} + 1) / 2 )) i2=              # rarer half (ceil)
+      for i2 in {1..$keep}; do hot+=("${dft[i2]#*:}"); done
+      local exp ew; exp=$(_cc_expand_query "${hot[*]}")
+      for ew in ${(s: :)exp}; do
+        [[ ${#ew} -ge 3 && -z ${stop[$ew]-} ]] || continue
+        [[ " ${qt[*]} ${et[*]} " == *" $ew "* ]] && continue   # dedupe vs original + already-added
+        et+=("$ew")
+      done
+    fi
   fi
   local -a at=($qt $et)                          # union: used for body IDF scoring
   local pat=${(j:|:)at}
@@ -1307,7 +1315,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
       -r|--refresh) refresh=1; shift ;;
       -s|--summary) summary=1; targeted=1; shift ;;  # summaries only make sense for named chats
       -a|--all)     shift ;;                          # back-compat no-op: cross-chat IS the default now
-      -e|--expand)  expand=1; shift ;;
+      -e|--expand)  expand=force; shift ;;   # force synonym expansion (default is adaptive: only when needed)
       -E|--no-expand) expand=; shift ;;
       -c|--chat)    targeted=1
                     if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"

@@ -15,9 +15,13 @@ question → tokenize → expand-synonyms★ → grep-rank chats → pick best t
 **1 · Tokenize — local.** Lowercase the question, drop stopwords, keep meaningful terms (≥3 chars).
 `"how did we fix the DLQ redrive?"` → `fix, dlq, redrive`.
 
-**2 · Expand for meaning — one small model call (default on, `-E` disables).** Claude suggests the
-words a transcript likely used, so wording needn't match: `dead-letter queue` → `dlq, redrive, sqs,
-reprocess, poison, retry`. This is semantic recall **without embeddings or a vector DB**.
+**2 · Expand for meaning — ADAPTIVE model call.** Claude suggests the words a transcript likely used,
+so wording needn't match: `dead-letter queue` → `dlq, redrive, sqs, reprocess, poison, retry`. Semantic
+recall **without embeddings or a vector DB**. **Adaptive:** this is a whole extra 12–45 s call, and it
+only helps on a vocabulary gap — so it's skipped when the query already has a **discriminating** term
+that appears (0 < df ≤ N/2, checked with one cheap local grep first). It fires only when *no* original
+term discriminates (all absent, or all ubiquitous). `-e` forces it; `-E` / `CCASK_EXPAND=0` disables it.
+Skipping the call is the main lever keeping a typical `ccask` to a single model call (~25–30 s).
 
 **3 · Build the corpus — local.** List every `~/.claude/projects/*/*.jsonl`, dropping **ephemeral**
 sessions (headless one-shots, seed sessions, slash-command runs) so the tool's own noise can't
