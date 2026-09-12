@@ -1105,11 +1105,14 @@ _cc_md_ansi() {   # lightweight markdown -> ANSI renderer (headers, bold, code, 
     s/^(\s*)[-*+]\s+/${1}\e[36m•\e[0m /mg;
   '
 }
-_cc_present() {   # show a markdown answer with styling on a TTY, then offer to copy the raw markdown
+_cc_present() {   # render a markdown answer with styling on a TTY (piped -> raw markdown). Copy offer is separate (_cc_copy_offer), shown AFTER the done line.
   local md="$1"
   [[ -t 1 ]] || { print -r -- "$md"; return; }          # piped/redirected -> raw markdown (unchanged)
   if command -v glow >/dev/null 2>&1; then print -r -- "$md" | glow -; else _cc_md_ansi "$md"; fi
-  [[ -t 0 ]] || return
+}
+_cc_copy_offer() {   # offer to copy the raw markdown to the clipboard (TTY + interactive only) — call AFTER _cc_done_line
+  local md="$1"
+  [[ -t 1 && -t 0 && -n $md ]] || return
   local clip; clip=$(_cc_clipcmd) || return
   local yn; print -u2 -n $'\e[2mCopy raw markdown to clipboard? [y/N] \e[0m'; read -k 1 yn; print -u2 ""
   [[ "${yn:l}" == y ]] && { print -r -- "$md" | eval "$clip" 2>/dev/null && print -u2 -- $'\e[2m✓ copied as markdown\e[0m' || print -u2 -- $'\e[2m(copy failed)\e[0m'; }
@@ -1260,7 +1263,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
-  _cc_present "$out"
+  _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line
 }
 
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
@@ -1301,7 +1304,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
   fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
-  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && _cc_done_line $_t0; return $rc; }
+  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && { _cc_done_line $_t0; (( rc == 0 )) && _cc_copy_offer "$_CC_ANSWER_MD"; }; return $rc; }
   local prompt out ctxmat=
   if [[ -n $summary ]]; then
     # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)
@@ -1341,6 +1344,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"
   _cc_done_line $_t0
+  _cc_copy_offer "$out"
 }
 
 ccfetch() {
