@@ -34,13 +34,16 @@ _cc_is_internal() {   # 0 if $1 is a Claudius-generated headless session (by its
   grep -m1 '"type":"user"' "$1" 2>/dev/null | grep -qE "$_CC_INTERNAL_SIG"
 }
 _cc_is_ephemeral() {  # 0 if $1 is a throwaway session not worth importing/searching:
-  # a one-shot (<=1 user turn: headless claude -p, slash-command one-off, or abandoned) OR a
-  # "new session seeded with summaries" session. Robust & wording-independent.
-  local nu; nu=$(LC_ALL=C grep -c -m2 '"type":"user"' "$1" 2>/dev/null)
-  (( ${nu:-0} <= 1 )) && return 0
+  # a one-shot (<=1 user turn: headless claude -p, slash-command one-off, or abandoned), a Claudius
+  # slash-command session, or a SHORT "seeded with summaries" stub. A seeded session the user then
+  # actually worked in (many turns) is a REAL chat and is KEPT. Robust & wording-independent.
+  local seedmax=${CCASK_SEED_MAXTURNS:-8}
+  local nu; nu=$(LC_ALL=C grep -c -m$(( seedmax + 1 )) '"type":"user"' "$1" 2>/dev/null); nu=${nu:-0}
+  (( nu <= 1 )) && return 0
   local fm; fm=$(grep -m1 '"type":"user"' "$1" 2>/dev/null)
-  print -r -- "$fm" | grep -q "starting a new working session. Below are handoff" && return 0
   print -r -- "$fm" | grep -qF '<command-name>/cc' && return 0   # session opened with a Claudius slash command
+  # seeded-with-handoff stub: only throwaway if it STAYED short (<= seedmax turns); a worked-in one is kept
+  (( nu <= seedmax )) && print -r -- "$fm" | grep -q "starting a new working session. Below are handoff" && return 0
   return 1
 }
 
@@ -1233,6 +1236,8 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     topfiles+=("$f2"); topids+=("$id2"); labels+=("$(_cc_label_for "$id2" "$f2")")
   done
   print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'   # show the chats up front, before the (slower) query-aware build
+  # $CCASK_DEBUG_RANK: print the ranked "rank<TAB>session-id" list and stop (no model call) — used by test/eval-ranking.zsh
+  [[ -n ${CCASK_DEBUG_RANK-} ]] && { local di=; for di in {1..${#topids}}; do print -r -- "$di"$'\t'"${topids[di]}"; done; return 0; }
   _cc_spin_start "preparing ${#topfiles} chats"
   local j=
   for j in {1..${#topfiles}}; do
