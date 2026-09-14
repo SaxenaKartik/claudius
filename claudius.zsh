@@ -1200,7 +1200,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
       (( tdf > 0 && tdf * 2 <= N )) && (( useful++ ))                        # a term that appears AND discriminates
     done
     if [[ ${3} != force ]] && (( useful > 0 )); then
-      print -u2 -- $'\e[2m  (your terms already discriminate — skipping synonym expansion; -e to force)\e[0m'
+      print -u2 -- $'\e[2m  (your terms are specific enough, skipping synonym expansion; -e to force)\e[0m'
     else
       # expand only the RARER HALF (highest IDF) of the query terms — don't waste synonyms on common words
       dft=("${(@o)dft}")                                                    # sort ascending by df (rarest first)
