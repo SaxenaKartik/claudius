@@ -1315,11 +1315,38 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line
 }
 
+_cc_edit_question() {   # read a (multi-line) question straight from the terminal; result in $_CC_Q (empty = aborted)
+  # A plain read-loop, NOT a full-screen editor: no alt-screen, no $EDITOR dependency, and — because
+  # zle line-editing (tab-completion, bracketed paste) is inactive inside `read` — a pasted multi-line /
+  # tab-laden block comes through as raw text instead of being mangled at the command prompt.
+  _CC_Q=
+  print -u2 -- $'\e[1mPaste your question\e[0m (multi-line & tabs are fine), then press Enter. It auto-submits ~2s after the paste — or end now with Ctrl-D:'
+  local line rc; local -a lines=()
+  # First line blocks until you start (no premature timeout); capture it even if it arrives unterminated.
+  IFS= read -r line; rc=$?
+  (( rc != 0 )) && { [[ -n $line && "$line" != "." ]] && _CC_Q=$line; return 0; }
+  [[ "$line" == "." ]] && return 0
+  lines+=("$line")
+  # Remaining lines: short idle timeout — pasted lines arrive back-to-back, so the 2s gap only elapses
+  # once the paste is done → auto-submit. A lone "." or Ctrl-D ends now. Capture a final unterminated line.
+  while true; do
+    IFS= read -r -t 2 line; rc=$?
+    if (( rc == 0 )); then
+      [[ "$line" == "." ]] && break
+      lines+=("$line")
+    else
+      [[ -n $line && "$line" != "." ]] && lines+=("$line")   # trailing line with no newline (EOF/Ctrl-D)
+      break
+    fi
+  done
+  _CC_Q=${(F)lines}
+}
+
 ccask() {   # ask Claude a one-shot question about one or more saved chats (headless; no new conversation)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   zmodload zsh/datetime 2>/dev/null; local _t0=${EPOCHREALTIME:-0}   # for the "done" footer
-  local refresh= summary= context= expand=1 targeted= pick=; local -a chats=()
+  local refresh= summary= context= expand=1 targeted= pick= qfile=; local -a chats=()
   [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
     case "$1" in
@@ -1332,24 +1359,41 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
                     if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"
                     else pick=1; shift; fi ;;                                        # bare -c -> open the picker
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
+      -f|--file)    qfile="${2-}"; shift 2 ;;   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
       *) break ;;
     esac
   done
-  local q
+  local q=
+  # Question source order: --file, then explicit stdin (`-`), then a positional arg, else — when run
+  # interactively with no question — a paste prompt (read-loop, no editor) that captures multi-line /
+  # tabbed input without the command-line mangling a raw paste would cause.
+  if [[ -n $qfile ]]; then
+    if [[ "$qfile" == "-" ]]; then q="$(cat)"; else
+      [[ -r "$qfile" ]] || { echo "ccask: cannot read --file '$qfile'"; return 2; }
+      q="$(cat -- "$qfile")"
+    fi
+  fi
   if [[ -n $pick ]]; then
-    # bare -c: multi-select the chat(s) from the map, THEN type the question
+    # bare -c: multi-select the chat(s) from the map, THEN compose the question
     _cc_pick_names "Ask"; case $? in 2) echo 'ccask -c needs a terminal — pass a name: ccask -c "<chat>" "<question>"'; return 2;; 1) return 1;; esac
     chats=("${_CC_SEL_NAMES[@]}")
     print -u2 -- $'\e[2mAsking: '"${(j:, :)chats}"$'\e[0m'
-    print -u2 -n -- $'\e[1mQuestion:\e[0m '; IFS= read -r q
-    [[ -z $q ]] && { echo "no question — aborted."; return 2; }
+    [[ -z $q ]] && { _cc_edit_question; q=$_CC_Q; }   # open the editor to type/paste the question
+    [[ -z ${q//[[:space:]]/} ]] && { echo "no question — aborted."; return 2; }
+    print -u2 -- $'\e[2mSearching your chats…\e[0m'
   else
-    q="${1-}"
-    [[ -z $q ]] && { echo 'usage: ccask "<question>"            # searches ALL your chats (default)
-       ccask -c                         # pick chat(s) from a menu, then type your question
+    if [[ -z $q ]]; then
+      if [[ "${1-}" == "-" ]]; then q="$(cat)"; shift                       # cmd | ccask -
+      elif [[ -n "${1-}" ]]; then q="${1-}"; shift                          # ccask "<question>"
+      elif [[ -t 0 && ( -t 1 || -t 2 ) ]]; then _cc_edit_question; q=$_CC_Q   # bare `ccask` in a terminal → editor
+      fi
+    fi
+    [[ -z ${q//[[:space:]]/} ]] && { echo 'usage: ccask "<question>"            # or run `ccask` alone to paste a multi-line question
+       ccask -f <file>                  # question from a FILE (multi-line / tabbed input)
+       cmd | ccask -                    # question from stdin
+       ccask -c                         # pick chat(s), then paste the question
        ccask -c "<chat>" "<question>"   # ask ONE specific chat (also: ccask "<question>" "<chat>")
   flags: -E no synonym expansion · -s from cached summaries (targeted) · -x print context · -a legacy no-op'; return 2; }
-    shift
     (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
   fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
