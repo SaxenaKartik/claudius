@@ -889,8 +889,8 @@ _cc_conv_file() {   # $1=id $2=jsonl -> cached copy with ONLY user/assistant tur
   # jsonl inflates the document-frequency of your project terms (ccask, claudius, <service names>) and
   # flattens their IDF to ~0 — ranking on conversation-only lines restores real discrimination.
   local id="$1" jsonl="$2" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir; cdir="$base/claudius-cache"
-  local out="$cdir/$id.conv.jsonl"; mkdir -p "$cdir"
-  [[ -s "$out" && ! "$jsonl" -nt "$out" ]] || LC_ALL=C grep -aE '"type":"(user|assistant)"' "$jsonl" 2>/dev/null > "$out"
+  local out="$cdir/$id.conv2.jsonl"; mkdir -p "$cdir"   # conv2: bumped when tool_result lines were excluded from de-noise
+  [[ -s "$out" && ! "$jsonl" -nt "$out" ]] || LC_ALL=C grep -aE '"type":"(user|assistant)"' "$jsonl" 2>/dev/null | LC_ALL=C grep -av '"type":"tool_result"' > "$out"
   print -r -- "$out"
 }
 
@@ -991,12 +991,14 @@ q = sys.argv[1]; budget = int(sys.argv[2]); pairs = sys.argv[3:]
 STOP = set("the a an of in to for and or how does do is are was were be it its this that these those with on at by from as what which when where why who whom about into your my our their has have can could would should will".split())
 terms = [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 3 and w not in STOP]
 terms = list(dict.fromkeys(terms)) or [w for w in re.findall(r"[a-z0-9_]+", q.lower()) if len(w) >= 2]
-# collect relevant blocks per chat, preserving the chat order the caller passed (= relevance rank)
-by_chat = OrderedDict(); order = 0
+# collect relevant blocks per chat, keyed by the UNIQUE session path (not the display label — two
+# distinct sessions can share a label, which would otherwise merge their excerpts and mis-cite them).
+# label_of maps the path back to the label for the header. Caller order (= relevance rank) preserved.
+by_chat = OrderedDict(); order = 0; label_of = {}
 for pair in pairs:
     if "\t" not in pair: continue
     name, path = pair.split("\t", 1)
-    by_chat.setdefault(name, [])
+    by_chat.setdefault(path, []); label_of.setdefault(path, name)
     try: data = open(path, encoding="utf-8", errors="ignore").read()
     except Exception: continue
     parts = re.split(r"(?m)^(## (?:USER|ASSISTANT))\s*$", data)
@@ -1007,29 +1009,29 @@ for pair in pairs:
         low = text.lower()
         distinct = sum(1 for t in terms if t in low)
         if distinct:
-            by_chat[name].append((distinct, sum(low.count(t) for t in terms), order, text))
-for name in by_chat: by_chat[name].sort(key=lambda b: (b[0], b[1]), reverse=True)
+            by_chat[path].append((distinct, sum(low.count(t) for t in terms), order, text))
+for k in by_chat: by_chat[k].sort(key=lambda b: (b[0], b[1]), reverse=True)
 # round-robin across chats (best block of chat1, chat2, …, then 2nd-best of each) so every relevant
 # chat is represented and no single noisy chat monopolizes the budget
-names = list(by_chat.keys())
+keys = list(by_chat.keys())
 rr = []
 for r in range(max((len(v) for v in by_chat.values()), default=0)):
-    for name in names:
-        if r < len(by_chat[name]):
-            b = by_chat[name][r]; rr.append((name, b[2], b[3]))
+    for k in keys:
+        if r < len(by_chat[k]):
+            b = by_chat[k][r]; rr.append((k, b[2], b[3]))
 sel = []; used = 0
-for name, ordr, text in rr:
+for k, ordr, text in rr:
     if used + len(text) > budget and sel: continue
-    sel.append((name, ordr, text)); used += len(text)
+    sel.append((k, ordr, text)); used += len(text)
     if used >= budget: break
 # output grouped by chat (rank order), blocks in original chronological order
-grouped = OrderedDict((n, []) for n in names)
-for name, ordr, text in sel: grouped[name].append((ordr, text))
+grouped = OrderedDict((k, []) for k in keys)
+for k, ordr, text in sel: grouped[k].append((ordr, text))
 out = []
-for name in names:
-    items = sorted(grouped[name])
+for k in keys:
+    items = sorted(grouped[k])
     if not items: continue
-    out.append(f"\n### From chat: {name}\n"); out.extend(t for _, t in items)
+    out.append(f"\n### From chat: {label_of[k]}\n"); out.extend(t for _, t in items)
 print("\n\n".join(out))
 PY
 }
