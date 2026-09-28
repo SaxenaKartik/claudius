@@ -107,6 +107,19 @@ out=$(CLAUDE_CODE_SESSION_ID=$idA ccname); okc "ccname returns mapped name" "Alp
 out=$(CLAUDE_CODE_SESSION_ID=99999999-9999-9999-9999-999999999999 ccname); okc "ccname unmapped session" "not in the map" "$out"
 out=$(CLAUDE_CODE_SESSION_ID= ccname 2>&1); okc "ccname no session env" "not inside a Claude session" "$out"
 
+print "===== ccstatus ====="
+out=$(print -r -- "{\"session_id\":\"$idA\",\"model\":{\"display_name\":\"Opus\"}}" | ccstatus); okc "ccstatus shows mapped name" "◆ Alpha" "$out"
+okc "ccstatus generic line has model" "Opus" "$out"
+out=$(print -r -- '{"session_id":"99999999-9999-9999-9999-999999999999"}' | ccstatus); okc "ccstatus unnamed chat" "unnamed chat" "$out"
+print -r -- '{"statusLine":{"type":"command","command":"echo BASELINE","refreshInterval":7}}' > "$CLAUDE_CONFIG_DIR/settings.json"
+ccstatus --install >/dev/null
+okc "ccstatus --install wires settings" "ccstatus" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
+out=$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus); okc "ccstatus keeps base line" "BASELINE" "$out"
+ccstatus --uninstall >/dev/null
+okc "ccstatus --uninstall restores base" "echo BASELINE" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
+okc "ccstatus --uninstall keeps refreshInterval" "refreshInterval" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
+rm -f "$CLAUDE_CONFIG_DIR/settings.json"
+
 print "===== ccmonitor ====="
 out=$(ccmonitor); okc "ccmonitor header" "CONVERSATION" "$out"
 okc "ccmonitor shows Alpha" "Alpha" "$out"

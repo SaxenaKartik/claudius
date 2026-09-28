@@ -186,6 +186,10 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     ccname)    print -r -- 'ccname — print what THIS chat is mapped as.
   Usage: ccname
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
+    ccstatus)  print -r -- 'ccstatus — show this chat'"'"'s name in the Claude Code status line.
+  Usage: ccstatus --install     wire it into settings.json (keeps any existing status line as the base)
+         ccstatus --uninstall   restore the previous status line
+  Prints your existing status line (if any), then "◆ <name>" (or "unnamed chat").';;
     ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
   Usage: ccplay [game]
   Games: wordle, typeracer, guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
@@ -218,6 +222,7 @@ cchelp() {
   print -r -- "  map: $_CC_MAP"
   print
   printf '  \e[36m%-33s\e[0m %s\n' 'ccname'                        'print THIS chat'\''s name in the map'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccstatus --install'            'show THIS chat'\''s name in the Claude status line'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccplay [game]'                 'mini games while Claude thinks (no arg = menu)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist -l'                     'plain list (name + id)'
@@ -272,6 +277,8 @@ _cc_launch() {
     claude --resume "$id" "${extra[@]}"
   fi
 }
+
+_CC_SELF=${${(%):-%x}:A}   # absolute path of this file (for ccstatus --install)
 
 _cc_rows() {
   awk -F'|' '
@@ -581,6 +588,55 @@ ccname() {
   while IFS=$'\t' read -r n i; do [[ "$i" == "$id" ]] && { print -r -- "$n"; return 0; }; done < <(_cc_rows)
   echo "this session ($id) is not in the map — add it with: ccadd \"<name>\"  (or /ccadd)"
   return 1
+}
+
+ccstatus() {   # Claude Code status line: [existing/base line] + "◆ <this chat's name>"
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccstatus; return 0; }
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" basef; basef="$cfg/claudius-statusline-base"
+  if [[ "${1-}" == --install || "${1-}" == --uninstall ]]; then
+    command -v python3 >/dev/null 2>&1 || { echo "ccstatus --install needs python3 (to edit settings.json)"; return 1; }
+    CCS_MODE="$1" CCS_SELF="$_CC_SELF" CCS_CFG="$cfg" python3 - <<'PY'
+import json, os
+cfg=os.environ["CCS_CFG"]; p=os.path.join(cfg,"settings.json"); basef=os.path.join(cfg,"claudius-statusline-base")
+s=json.load(open(p)) if os.path.exists(p) else {}
+ours="zsh -c 'source \"%s\"; ccstatus'" % os.environ["CCS_SELF"]
+cur=(s.get("statusLine") or {}).get("command","")
+if os.environ["CCS_MODE"]=="--uninstall":
+    base=open(basef).read().strip() if os.path.exists(basef) else ""
+    if base: sl=s.get("statusLine") or {}; sl.update({"type":"command","command":base}); s["statusLine"]=sl
+    else: s.pop("statusLine",None)
+    if os.path.exists(basef): os.remove(basef)
+    print("ccstatus removed" + (" (restored: %s)" % base if base else ""))
+else:
+    if cur and "ccstatus" not in cur:
+        open(basef,"w").write(cur+"\n"); print("kept your existing status line as the base:", cur)
+    sl=s.get("statusLine") or {}
+    sl.update({"type":"command","command":ours}); s["statusLine"]=sl
+    print("status line now: " + ours)
+json.dump(s,open(p,"w"),indent=2); open(p,"a").write("\n")
+PY
+    return
+  fi
+  local input; input=$(cat)
+  local base=; [[ -s "$basef" ]] && base=$(<"$basef")
+  if [[ -n $base ]]; then
+    local bout; bout=$(print -rn -- "$input" | zsh -c "$base" 2>/dev/null)   # $(...) strips trailing newlines
+    print -rn -- "$bout"
+  else
+    # generic line (no base configured): "<model> | <dir>" from the JSON Claude passes on stdin
+    local ml dir
+    ml=$(print -r -- "$input" | grep -oE '"display_name" *: *"[^"]*"' | head -1 | sed -E 's/.*: *"(.*)"/\1/')
+    dir=$(print -r -- "$input" | grep -oE '"current_dir" *: *"[^"]*"' | head -1 | sed -E 's/.*: *"(.*)"/\1/')
+    local sep=$' \e[2m|\e[0m '
+    print -rn -- $'\e[36m'"${ml:-Claude}"$'\e[0m'"${dir:+$sep${dir:t}}"
+  fi
+  local sid n i nm=
+  sid=$(print -r -- "$input" | grep -oE '"session_id" *: *"[^"]*"' | head -1 | sed -E 's/.*: *"(.*)"/\1/')
+  if [[ -n $sid ]]; then
+    while IFS=$'\t' read -r n i; do [[ "$i" == "$sid" ]] && { nm=$n; break; }; done < <(_cc_rows)
+  fi
+  if [[ -n $nm ]]; then print -r -- $'\n\e[35m◆ '"$nm"$'\e[0m'
+  else print -r -- $'\n\e[2m◆ unnamed chat (/ccadd to name it)\e[0m'; fi
 }
 
 # Interactive name chooser for name-taking commands invoked with no argument.

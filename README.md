@@ -120,6 +120,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccbranch "<name>"` | Fork a chat's full history into a **new** session (original untouched) |
 | `ccname` | Print THIS chat's name in the map |
+| `ccstatus --install` | Show THIS chat's name in the Claude Code status line (`◆ <name>`), keeping any existing status line above it; `--uninstall` restores it |
 | `ccplay [game]` | Mini games while something runs — **wordle** (dictionary-checked, with a live keyboard tracker), guess, rps, flip, roll, react, math, hangman, scramble, 8ball; no arg = menu |
 | `ccfind "<text>"` | Search names **and** notes |
 | `ccimport [-a]` | Name your un-named sessions, with an **AI-suggested name** per chat (Enter accepts · type to override · `-` skips). No flag = multi-select picker (Space ticks); `-a`/`--all` = walk through every one (Esc quits). Skips throwaway sessions. |
