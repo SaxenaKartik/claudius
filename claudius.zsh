@@ -187,8 +187,10 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Usage: ccname
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
     ccstatus)  print -r -- 'ccstatus — show this chat'"'"'s name in the Claude Code status line.
-  Usage: ccstatus --install     wire it into settings.json (keeps any existing status line as the base)
-         ccstatus --uninstall   restore the previous status line
+  On by default: Claudius wires it into settings.json the first time it loads (keeping any existing
+  status line as the base). Opt out with CLAUDIUS_NO_STATUSLINE=1, or run --uninstall.
+  Usage: ccstatus --install     (re)wire it now
+         ccstatus --uninstall   restore the previous status line and stop auto-wiring
   Prints your existing status line (if any), then "◆ <name>" (or "unnamed chat").';;
     ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
   Usage: ccplay [game]
@@ -222,7 +224,7 @@ cchelp() {
   print -r -- "  map: $_CC_MAP"
   print
   printf '  \e[36m%-33s\e[0m %s\n' 'ccname'                        'print THIS chat'\''s name in the map'
-  printf '  \e[36m%-33s\e[0m %s\n' 'ccstatus --install'            'show THIS chat'\''s name in the Claude status line'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccstatus [--uninstall]'        'THIS chat'\''s name in the Claude status line (on by default)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccplay [game]'                 'mini games while Claude thinks (no arg = menu)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist -l'                     'plain list (name + id)'
@@ -595,6 +597,7 @@ ccstatus() {   # Claude Code status line: [existing/base line] + "◆ <this chat
   local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" basef; basef="$cfg/claudius-statusline-base"
   if [[ "${1-}" == --install || "${1-}" == --uninstall ]]; then
     command -v python3 >/dev/null 2>&1 || { echo "ccstatus --install needs python3 (to edit settings.json)"; return 1; }
+    if [[ "$1" == --uninstall ]]; then : >| "$cfg/claudius-statusline-off"; else rm -f "$cfg/claudius-statusline-off"; fi
     CCS_MODE="$1" CCS_SELF="$_CC_SELF" CCS_CFG="$cfg" python3 - <<'PY'
 import json, os
 cfg=os.environ["CCS_CFG"]; p=os.path.join(cfg,"settings.json"); basef=os.path.join(cfg,"claudius-statusline-base")
@@ -1957,3 +1960,16 @@ if (( $+functions[compdef] )); then
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
   compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache cccleanup
 fi
+
+# --- status line on by default: show "◆ <chat name>" in Claude Code's status line --------------
+# Cheap on every source: a grep of settings.json; only edits it when not yet wired. Skipped if the
+# user opted out (CLAUDIUS_NO_STATUSLINE=1 or after `ccstatus --uninstall`) or python3 is missing.
+_cc_statusline_autowire() {
+  [[ -n ${CLAUDIUS_NO_STATUSLINE-} ]] && return 0
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  [[ -d "$cfg" && ! -e "$cfg/claudius-statusline-off" ]] || return 0
+  [[ -f "$cfg/settings.json" ]] && grep -q 'ccstatus' "$cfg/settings.json" 2>/dev/null && return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  ccstatus --install >/dev/null 2>&1
+}
+_cc_statusline_autowire

@@ -28,12 +28,15 @@ CMD_DIR="$CLAUDE_DIR/commands"
 MAP="${CC_MAP:-$CLAUDE_DIR/cc_map.md}"
 RC="${ZDOTDIR:-$HOME}/.zshrc"
 SRC="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-CMDS="ccadd ccname ccfetch ccspec ccexplain ccexport ccplay ccask"
+CMDS="ccadd ccname ccrename ccfetch ccspec ccexplain ccexport ccplay ccask"
 
 say() { printf '%s\n' "$*"; }
 
 # --- uninstall --------------------------------------------------------------
 if [ "${1:-}" = "--uninstall" ]; then
+  # restore the previous Claude status line (if Claudius wired it) before the helper goes away
+  [ -f "$HELPER" ] && command -v zsh >/dev/null 2>&1 && zsh -c "source \"$HELPER\" && ccstatus --uninstall" >/dev/null 2>&1 || true
+  rm -f "$CLAUDE_DIR/claudius-statusline-off"
   rm -f "$HELPER"
   for c in $CMDS; do rm -f "$CMD_DIR/$c.md"; done
   if [ -f "$RC" ] && grep -q "claudius.zsh" "$RC" 2>/dev/null; then
@@ -103,7 +106,7 @@ fi
 say ""
 say "Claudius installed."
 say "  helper  : $HELPER"
-say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay in a chat)"
+say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccrename /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay in a chat)"
 say "  map     : $MAP"
 say ""
 say "Reload now:  source \"$RC\"     then run:  claudius  (walkthrough)  ·  cchelp  (all commands)"

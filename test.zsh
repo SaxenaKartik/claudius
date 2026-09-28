@@ -119,6 +119,14 @@ ccstatus --uninstall >/dev/null
 okc "ccstatus --uninstall restores base" "echo BASELINE" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
 okc "ccstatus --uninstall keeps refreshInterval" "refreshInterval" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
 rm -f "$CLAUDE_CONFIG_DIR/settings.json"
+# on by default: sourcing wires it into a fresh settings.json; opt-outs are respected
+HLP="$CLAUDE_CONFIG_DIR/claudius.zsh"; AW=$(mktemp -d)
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okc "autowire on source" "ccstatus" "$(cat $AW/settings.json 2>/dev/null)"
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'; ccstatus --uninstall" >/dev/null
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okn "no re-wire after --uninstall" "ccstatus" "$(cat $AW/settings.json 2>/dev/null)"
+rm -rf $AW; AW=$(mktemp -d)
+CLAUDE_CONFIG_DIR=$AW CLAUDIUS_NO_STATUSLINE=1 zsh -c "source '$HLP'"; [[ -f $AW/settings.json ]]; okrc "CLAUDIUS_NO_STATUSLINE opt-out" 1 $?
+rm -rf $AW
 
 print "===== ccmonitor ====="
 out=$(ccmonitor); okc "ccmonitor header" "CONVERSATION" "$out"
@@ -310,6 +318,8 @@ print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexplain.md" ]]; okrc "/ccexplain installed" 0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexport.md" ]];  okrc "/ccexport installed"  0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccname.md" ]];    okrc "/ccname installed"    0 $?
+[[ -f "$CLAUDE_CONFIG_DIR/commands/ccrename.md" ]];  okrc "/ccrename installed"  0 $?
+okn "/ccrename MAPPORT substituted" "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccrename.md")"
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccask.md" ]];     okrc "/ccask installed"     0 $?
 # installer must bake the real map path in (no {MAPPORT} placeholder left behind)
 okn "/ccfetch MAPPORT substituted" "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccfetch.md")"
@@ -343,6 +353,7 @@ ok "rc source line removed" 0 "$(grep -c claudius.zsh "$SB/.zshrc")"
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccfetch.md" ]]; okrc "/ccfetch removed" 1 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccspec.md" ]];  okrc "/ccspec removed"  1 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccname.md" ]];  okrc "/ccname removed"  1 $?
+[[ -f "$CLAUDE_CONFIG_DIR/commands/ccrename.md" ]];  okrc "/ccrename removed"  1 $?
 
 rm -rf "$SB"
 print "\n================  $PASS passed, $FAIL failed  ================"
