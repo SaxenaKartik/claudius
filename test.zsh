@@ -141,6 +141,9 @@ out=$(ccmusic stop); okc "ccmusic stop" "stopped" "$out"
 out=$(ccmusic status); okc "ccmusic idle after stop" "nothing playing" "$out"
 okn "status line clean when idle" "♪" "$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus)"
 out=$(ccmusic pause); okc "pause with nothing playing" "nothing playing" "$out"
+out=$(PATH="$STUB:$PATH" ccmusic 'https://example.com/stream?a=1&b=2'); okc "bare URL means play" "playing" "$out"
+ccmusic stop >/dev/null
+out=$(zsh -c "setopt nobareglobqual; source '$HLP' 2>&1; typeset -f ccmusic >/dev/null && echo LOADED"); okc "loads in a nobareglobqual shell (Claude Bash tool)" "LOADED" "$out"
 rm -rf $STUB
 
 print "===== ccmonitor ====="

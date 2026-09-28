@@ -27,6 +27,15 @@
 # Tab completion: ccresume/ccremove/ccrename/ccnote/ccfetch/ccspec/ccfind complete conversation names (needs compinit loaded).
 # Map resolution: explicit $CC_MAP wins; else the native cc_map.md; else — if that's empty/missing —
 # auto-discover the ccname skill's session-map (so names work with no env var). Glob is generic.
+# Load under zsh's STICKY emulation so every Claudius function runs with default zsh options, even
+# when sourced from a shell with non-default ones (e.g. Claude Code's Bash tool sets nobareglobqual,
+# which breaks the `(N)` glob qualifiers used throughout). Functions defined inside `emulate zsh -c`
+# restore zsh defaults whenever they're called.
+if [[ -z ${_CC_STICKY-} ]]; then
+  _CC_STICKY=1 emulate zsh -c "source ${(q)${(%):-%x}}"
+  return $?
+fi
+
 if [[ -n ${CC_MAP:-} ]]; then
   _CC_MAP="$CC_MAP"
 else
@@ -674,10 +683,13 @@ _cc_music_segment() {   # status-line piece: "♪ <title> ▶|⏸", or nothing w
 ccmusic() {   # play / pause / resume / stop background music (files, folders, stream URLs)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccmusic; return 0; }
   local d; d=$(_cc_music_dir); mkdir -p "$d"
-  local cmd="${1-status}"; (( $# )) && shift
+  local cmd="${1-status}"
+  case "$cmd" in (play|p|pause|resume|r|next|n|stop|s|status|-s|--shuffle) ;; (*://*|/*|./*|~*|*.*) cmd=play; set -- play "$@" ;; esac   # bare URL/path => play
+  (( $# )) && shift
   local pid player; player=$(_cc_rdf "$d/player")
   case "$cmd" in
-    play|p)
+    play|p|-s|--shuffle)
+      [[ $cmd == -s || $cmd == --shuffle ]] && set -- -s "$@"
       local shuf=; [[ "${1-}" == -s || "${1-}" == --shuffle ]] && { shuf=1; shift; }
       local src="$*"
       [[ -z $src ]] && { echo 'usage: ccmusic play [-s] <file | folder | stream URL>'; return 2; }
@@ -2019,7 +2031,10 @@ ccrename() {
 }
 
 # --- zsh tab-completion of conversation names (needs compinit loaded) ---
-if (( $+functions[compdef] )); then
+# register only when the completion system is really usable: compinit's _comps map exists (a real
+# interactive shell), or compdef is a plain stub (tests). A bare compdef with no _comps (e.g. Claude
+# Code's Bash tool) would hit a fatal error and abort loading the rest of this file.
+if (( $+functions[compdef] )) && { [[ ${(t)_comps-} == association* ]] || [[ ${functions[compdef]} != *_comps* ]]; }; then
   _cc_complete_names() {
     local -a names matched
     names=(${(f)"$(_cc_rows | cut -f1)"})
