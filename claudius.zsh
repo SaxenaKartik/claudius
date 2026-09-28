@@ -622,15 +622,25 @@ ours="zsh -c 'source \"%s\"; ccstatus'" % os.environ["CCS_SELF"]
 cur=(s.get("statusLine") or {}).get("command","")
 if os.environ["CCS_MODE"]=="--uninstall":
     base=open(basef).read().strip() if os.path.exists(basef) else ""
-    if base: sl=s.get("statusLine") or {}; sl.update({"type":"command","command":base}); s["statusLine"]=sl
+    ivf=basef+".interval"; iv=open(ivf).read().strip() if os.path.exists(ivf) else ""
+    if base:
+        sl=s.get("statusLine") or {}; sl.update({"type":"command","command":base})
+        if iv: sl["refreshInterval"]=int(float(iv))
+        else: sl.pop("refreshInterval",None)
+        s["statusLine"]=sl
     else: s.pop("statusLine",None)
+    if os.path.exists(ivf): os.remove(ivf)
     if os.path.exists(basef): os.remove(basef)
     print("ccstatus removed" + (" (restored: %s)" % base if base else ""))
 else:
     if cur and "ccstatus" not in cur:
         open(basef,"w").write(cur+"\n"); print("kept your existing status line as the base:", cur)
     sl=s.get("statusLine") or {}
-    sl.update({"type":"command","command":ours}); s["statusLine"]=sl
+    ivf=basef+".interval"
+    ri=sl.get("refreshInterval")
+    if "ccstatus" not in cur and ri is not None: open(ivf,"w").write(str(ri))   # remember the previous timer
+    # redraw every 2s (seconds) so music state from media keys / other terminals shows promptly (~0.1s/run)
+    sl.update({"type":"command","command":ours,"refreshInterval":2}); s["statusLine"]=sl
     print("status line now: " + ours)
 json.dump(s,open(p,"w"),indent=2); open(p,"a").write("\n")
 PY
@@ -2074,7 +2084,8 @@ _cc_statusline_autowire() {
   [[ -n ${CLAUDIUS_NO_STATUSLINE-} ]] && return 0
   local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   [[ -d "$cfg" && ! -e "$cfg/claudius-statusline-off" ]] || return 0
-  [[ -f "$cfg/settings.json" ]] && grep -q 'ccstatus' "$cfg/settings.json" 2>/dev/null && return 0
+  [[ -f "$cfg/settings.json" ]] && grep -q 'ccstatus' "$cfg/settings.json" 2>/dev/null \
+    && grep -qE '"refreshInterval": *2([,}]|$)' "$cfg/settings.json" 2>/dev/null && return 0
   command -v python3 >/dev/null 2>&1 || return 0
   ccstatus --install >/dev/null 2>&1
 }

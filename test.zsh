@@ -114,10 +114,11 @@ out=$(print -r -- '{"session_id":"99999999-9999-9999-9999-999999999999"}' | ccst
 print -r -- '{"statusLine":{"type":"command","command":"echo BASELINE","refreshInterval":7}}' > "$CLAUDE_CONFIG_DIR/settings.json"
 ccstatus --install >/dev/null
 okc "ccstatus --install wires settings" "ccstatus" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
+okc "ccstatus --install sets 2s refresh" '"refreshInterval": 2' "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
 out=$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus); okc "ccstatus keeps base line" "BASELINE" "$out"
 ccstatus --uninstall >/dev/null
 okc "ccstatus --uninstall restores base" "echo BASELINE" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
-okc "ccstatus --uninstall keeps refreshInterval" "refreshInterval" "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
+okc "ccstatus --uninstall restores previous refreshInterval" '"refreshInterval": 7' "$(<"$CLAUDE_CONFIG_DIR/settings.json")"
 rm -f "$CLAUDE_CONFIG_DIR/settings.json"
 # on by default: sourcing wires it into a fresh settings.json; opt-outs are respected
 HLP="$CLAUDE_CONFIG_DIR/claudius.zsh"; AW=$(mktemp -d)
