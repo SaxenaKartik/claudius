@@ -28,7 +28,7 @@ CMD_DIR="$CLAUDE_DIR/commands"
 MAP="${CC_MAP:-$CLAUDE_DIR/cc_map.md}"
 RC="${ZDOTDIR:-$HOME}/.zshrc"
 SRC="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-CMDS="ccadd ccname ccrename ccfetch ccspec ccexplain ccexport ccplay ccask"
+CMDS="ccadd ccname ccrename ccfetch ccspec ccexplain ccexport ccplay ccask ccmusic"
 
 say() { printf '%s\n' "$*"; }
 
@@ -106,7 +106,7 @@ fi
 say ""
 say "Claudius installed."
 say "  helper  : $HELPER"
-say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccrename /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay in a chat)"
+say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccrename /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay /ccmusic in a chat)"
 say "  map     : $MAP"
 say ""
 say "Reload now:  source \"$RC\"     then run:  claudius  (walkthrough)  ·  cchelp  (all commands)"

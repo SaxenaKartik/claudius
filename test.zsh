@@ -128,6 +128,21 @@ rm -rf $AW; AW=$(mktemp -d)
 CLAUDE_CONFIG_DIR=$AW CLAUDIUS_NO_STATUSLINE=1 zsh -c "source '$HLP'"; [[ -f $AW/settings.json ]]; okrc "CLAUDIUS_NO_STATUSLINE opt-out" 1 $?
 rm -rf $AW
 
+print "===== ccmusic (stub player, silent) ====="
+STUB=$(mktemp -d); print -r -- '#!/bin/sh
+exec sleep 30' > $STUB/mpv; chmod +x $STUB/mpv
+out=$(PATH="$STUB:$PATH" ccmusic play /tmp/some-song.mp3); okc "ccmusic play" "playing: some-song.mp3" "$out"
+out=$(ccmusic status); okc "ccmusic status playing" "▶" "$out"
+out=$(ccmusic pause); okc "ccmusic pause" "paused" "$out"
+okc "status line shows paused music" "♪ some-song.mp3" "$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus)"
+okc "status line pause icon" "⏸" "$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus)"
+out=$(ccmusic resume); okc "ccmusic resume" "resumed" "$out"
+out=$(ccmusic stop); okc "ccmusic stop" "stopped" "$out"
+out=$(ccmusic status); okc "ccmusic idle after stop" "nothing playing" "$out"
+okn "status line clean when idle" "♪" "$(print -r -- "{\"session_id\":\"$idA\"}" | ccstatus)"
+out=$(ccmusic pause); okc "pause with nothing playing" "nothing playing" "$out"
+rm -rf $STUB
+
 print "===== ccmonitor ====="
 out=$(ccmonitor); okc "ccmonitor header" "CONVERSATION" "$out"
 okc "ccmonitor shows Alpha" "Alpha" "$out"
@@ -319,6 +334,7 @@ print "===== slash commands installed ====="
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccexport.md" ]];  okrc "/ccexport installed"  0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccname.md" ]];    okrc "/ccname installed"    0 $?
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccrename.md" ]];  okrc "/ccrename installed"  0 $?
+[[ -f "$CLAUDE_CONFIG_DIR/commands/ccmusic.md" ]];   okrc "/ccmusic installed"   0 $?
 okn "/ccrename MAPPORT substituted" "{MAPPORT}" "$(cat "$CLAUDE_CONFIG_DIR/commands/ccrename.md")"
 [[ -f "$CLAUDE_CONFIG_DIR/commands/ccask.md" ]];     okrc "/ccask installed"     0 $?
 # installer must bake the real map path in (no {MAPPORT} placeholder left behind)

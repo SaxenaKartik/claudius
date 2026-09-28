@@ -186,6 +186,11 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     ccname)    print -r -- 'ccname — print what THIS chat is mapped as.
   Usage: ccname
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
+    ccmusic)   print -r -- 'ccmusic — background music while you work; shown in the Claude status line.
+  Usage: ccmusic play [-s] <file | folder | stream URL>   (-s = shuffle a folder)
+         ccmusic pause | resume | next | stop | status
+  Uses mpv (files, folders, internet radio/stream URLs, live titles); falls back to ffplay/afplay.
+  Inside a chat: /ccmusic <same args>. Status line shows "♪ <title> ▶" or "⏸".';;
     ccstatus)  print -r -- 'ccstatus — show this chat'"'"'s name in the Claude Code status line.
   On by default: Claudius wires it into settings.json the first time it loads (keeping any existing
   status line as the base). Opt out with CLAUDIUS_NO_STATUSLINE=1, or run --uninstall.
@@ -224,6 +229,7 @@ cchelp() {
   print -r -- "  map: $_CC_MAP"
   print
   printf '  \e[36m%-33s\e[0m %s\n' 'ccname'                        'print THIS chat'\''s name in the map'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccmusic play|pause|resume|stop' 'background music, shown in the status line (/ccmusic in a chat)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccstatus [--uninstall]'        'THIS chat'\''s name in the Claude status line (on by default)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccplay [game]'                 'mini games while Claude thinks (no arg = menu)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
@@ -638,8 +644,81 @@ PY
   if [[ -n $sid ]]; then
     while IFS=$'\t' read -r n i; do [[ "$i" == "$sid" ]] && { nm=$n; break; }; done < <(_cc_rows)
   fi
-  if [[ -n $nm ]]; then print -r -- $'\n\e[35m◆ '"$nm"$'\e[0m'
-  else print -r -- $'\n\e[2m◆ unnamed chat (/ccadd to name it)\e[0m'; fi
+  local mus; mus=$(_cc_music_segment)
+  if [[ -n $nm ]]; then print -r -- $'\n\e[35m◆ '"$nm"$'\e[0m'"${mus:+   $mus}"
+  else print -r -- $'\n\e[2m◆ unnamed chat (/ccadd to name it)\e[0m'"${mus:+   $mus}"; fi
+}
+
+# --- ccmusic: background music inside Claude chats, shown in the status line --------------------
+_cc_music_dir() { print -r -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-music"; }
+_cc_rdf() { [[ -r "$1" ]] && print -r -- "$(<"$1")"; }   # read a small file; silent + empty if missing
+_cc_music_alive() { local d; d=$(_cc_music_dir); [[ -s "$d/pid" ]] && kill -0 "$(<"$d/pid")" 2>/dev/null; }
+_cc_mpv_ipc() {   # $1=json command -> mpv's reply (needs the IPC socket; empty on failure)
+  local sock; sock="$(_cc_music_dir)/sock"; [[ -S "$sock" ]] || return 1
+  print -r -- "$1" | nc -U -w1 "$sock" 2>/dev/null
+}
+_cc_music_title() {   # current track/stream title (mpv reports ICY/stream titles live), else the source name
+  local d t=; d=$(_cc_music_dir)
+  if [[ "$(_cc_rdf "$d/player")" == mpv ]]; then
+    t=$(_cc_mpv_ipc '{"command":["get_property","media-title"]}' | grep -oE '"data":"[^"]*"' | head -1 | sed -E 's/"data":"(.*)"/\1/')
+  fi
+  [[ -z $t ]] && { t=$(_cc_rdf "$d/src"); t=${t:t}; }
+  print -r -- "${t[1,48]}"
+}
+_cc_music_segment() {   # status-line piece: "♪ <title> ▶|⏸", or nothing when idle
+  local d; d=$(_cc_music_dir)
+  _cc_music_alive || { [[ -d $d ]] && rm -f "$d"/{pid,sock,src,player,paused} 2>/dev/null; return 0; }
+  local icon=$'\e[32m▶\e[0m'; [[ -e "$d/paused" ]] && icon=$'\e[33m⏸\e[0m'
+  print -rn -- $'\e[36m♪ '"$(_cc_music_title)"$'\e[0m '"$icon"
+}
+ccmusic() {   # play / pause / resume / stop background music (files, folders, stream URLs)
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccmusic; return 0; }
+  local d; d=$(_cc_music_dir); mkdir -p "$d"
+  local cmd="${1-status}"; (( $# )) && shift
+  local pid player; player=$(_cc_rdf "$d/player")
+  case "$cmd" in
+    play|p)
+      local shuf=; [[ "${1-}" == -s || "${1-}" == --shuffle ]] && { shuf=1; shift; }
+      local src="$*"
+      [[ -z $src ]] && { echo 'usage: ccmusic play [-s] <file | folder | stream URL>'; return 2; }
+      [[ -e "$src" ]] && src=${src:A}                       # local path -> absolute
+      _cc_music_alive && ccmusic stop >/dev/null
+      if command -v mpv >/dev/null 2>&1; then
+        player=mpv; rm -f "$d/sock"
+        mpv --no-video --no-terminal --input-ipc-server="$d/sock" ${shuf:+--shuffle} ${=CCMUSIC_MPV_ARGS-} -- "$src" </dev/null >/dev/null 2>&1 &!
+      elif command -v ffplay >/dev/null 2>&1; then
+        player=ffplay; ffplay -nodisp -autoexit -loglevel quiet "$src" </dev/null >/dev/null 2>&1 &!
+      elif command -v afplay >/dev/null 2>&1 && [[ -f "$src" ]]; then
+        player=afplay; afplay "$src" </dev/null >/dev/null 2>&1 &!
+      else
+        echo "ccmusic: no player found — install mpv (plays files, folders and stream URLs)"; return 1
+      fi
+      pid=$!
+      print -r -- "$pid" >| "$d/pid"; print -r -- "$player" >| "$d/player"; print -r -- "$src" >| "$d/src"; rm -f "$d/paused"
+      sleep 1
+      _cc_music_alive || { rm -f "$d"/{pid,sock,src,player}; echo "ccmusic: couldn't play '$src'"; return 1; }
+      echo "♪ playing: $(_cc_music_title)" ;;
+    pause)
+      _cc_music_alive || { echo "nothing playing"; return 1; }
+      if [[ $player == mpv && -S "$d/sock" ]]; then _cc_mpv_ipc '{"command":["set_property","pause",true]}' >/dev/null
+      else kill -STOP "$(<"$d/pid")"; fi
+      : >| "$d/paused"; echo "⏸ paused: $(_cc_music_title)" ;;
+    resume|r)
+      _cc_music_alive || { echo "nothing playing"; return 1; }
+      if [[ $player == mpv && -S "$d/sock" ]]; then _cc_mpv_ipc '{"command":["set_property","pause",false]}' >/dev/null
+      else kill -CONT "$(<"$d/pid")"; fi
+      rm -f "$d/paused"; echo "▶ resumed: $(_cc_music_title)" ;;
+    next|n)
+      _cc_music_alive || { echo "nothing playing"; return 1; }
+      [[ $player == mpv ]] || { echo "next needs mpv"; return 1; }
+      _cc_mpv_ipc '{"command":["playlist-next"]}' >/dev/null; sleep 0.5; echo "⏭ now: $(_cc_music_title)" ;;
+    stop|s)
+      if _cc_music_alive; then pid=$(<"$d/pid"); kill "$pid" 2>/dev/null; kill -CONT "$pid" 2>/dev/null; fi
+      rm -f "$d"/{pid,sock,src,player,paused}; echo "■ stopped" ;;
+    status|"")
+      if _cc_music_alive; then print -r -- "$(_cc_music_segment)"; else echo "■ nothing playing"; fi ;;
+    *) echo "usage: ccmusic play [-s] <file|folder|URL> | pause | resume | next | stop | status"; return 2 ;;
+  esac
 }
 
 # Interactive name chooser for name-taking commands invoked with no argument.
@@ -1958,7 +2037,7 @@ if (( $+functions[compdef] )); then
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay claudius cchelp cccache cccleanup
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay ccmusic claudius cchelp cccache cccleanup
 fi
 
 # --- status line on by default: show "◆ <chat name>" in Claude Code's status line --------------
