@@ -197,7 +197,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Looks up $CLAUDE_CODE_SESSION_ID in the map. No flags.';;
     ccmusic)   print -r -- 'ccmusic — background music while you work; shown in the Claude status line.
   Usage: ccmusic play [-s] <file | folder | stream URL>   (-s = shuffle a folder)
-         ccmusic pause | resume | next | stop | status
+         ccmusic pause | resume | toggle | next | prev | stop | status
+  Keyboard (macOS media keys, work in any app incl. Claude): F8 play/pause · F9 next · F7 previous.
   Uses mpv (files, folders, internet radio/stream URLs, live titles); falls back to ffplay/afplay.
   Inside a chat: /ccmusic <same args>. Status line shows "♪ <title> ▶" or "⏸".';;
     ccstatus)  print -r -- 'ccstatus — show this chat'"'"'s name in the Claude Code status line.
@@ -677,14 +678,18 @@ _cc_music_title() {   # current track/stream title (mpv reports ICY/stream title
 _cc_music_segment() {   # status-line piece: "♪ <title> ▶|⏸", or nothing when idle
   local d; d=$(_cc_music_dir)
   _cc_music_alive || { [[ -d $d ]] && rm -f "$d"/{pid,sock,src,player,paused} 2>/dev/null; return 0; }
-  local icon=$'\e[32m▶\e[0m'; [[ -e "$d/paused" ]] && icon=$'\e[33m⏸\e[0m'
+  local paused=; [[ -e "$d/paused" ]] && paused=1
+  if [[ "$(_cc_rdf "$d/player")" == mpv ]]; then   # truth from mpv itself: F8/Control Center pause it directly
+    case "$(_cc_mpv_ipc '{"command":["get_property","pause"]}')" in (*'"data":true'*) paused=1 ;; (*'"data":false'*) paused= ;; esac
+  fi
+  local icon=$'\e[32m▶\e[0m'; [[ -n $paused ]] && icon=$'\e[33m⏸\e[0m'
   print -rn -- $'\e[36m♪ '"$(_cc_music_title)"$'\e[0m '"$icon"
 }
 ccmusic() {   # play / pause / resume / stop background music (files, folders, stream URLs)
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccmusic; return 0; }
   local d; d=$(_cc_music_dir); mkdir -p "$d"
   local cmd="${1-status}"
-  case "$cmd" in (play|p|pause|resume|r|next|n|stop|s|status|-s|--shuffle) ;; (*://*|/*|./*|~*|*.*) cmd=play; set -- play "$@" ;; esac   # bare URL/path => play
+  case "$cmd" in (play|p|pause|resume|r|toggle|t|next|n|prev|previous|stop|s|status|-s|--shuffle) ;; (*://*|/*|./*|~*|*.*) cmd=play; set -- play "$@" ;; esac   # bare URL/path => play
   (( $# )) && shift
   local pid player; player=$(_cc_rdf "$d/player")
   case "$cmd" in
@@ -720,6 +725,13 @@ ccmusic() {   # play / pause / resume / stop background music (files, folders, s
       if [[ $player == mpv && -S "$d/sock" ]]; then _cc_mpv_ipc '{"command":["set_property","pause",false]}' >/dev/null
       else kill -CONT "$(<"$d/pid")"; fi
       rm -f "$d/paused"; echo "▶ resumed: $(_cc_music_title)" ;;
+    toggle|t)
+      _cc_music_alive || { echo "nothing playing"; return 1; }
+      if [[ "$(_cc_music_segment)" == *⏸* ]]; then ccmusic resume; else ccmusic pause; fi ;;
+    prev|previous)
+      _cc_music_alive || { echo "nothing playing"; return 1; }
+      [[ $player == mpv ]] || { echo "prev needs mpv"; return 1; }
+      _cc_mpv_ipc '{"command":["playlist-prev"]}' >/dev/null; sleep 0.5; echo "⏮ now: $(_cc_music_title)" ;;
     next|n)
       _cc_music_alive || { echo "nothing playing"; return 1; }
       [[ $player == mpv ]] || { echo "next needs mpv"; return 1; }
@@ -729,7 +741,7 @@ ccmusic() {   # play / pause / resume / stop background music (files, folders, s
       rm -f "$d"/{pid,sock,src,player,paused}; echo "■ stopped" ;;
     status|"")
       if _cc_music_alive; then print -r -- "$(_cc_music_segment)"; else echo "■ nothing playing"; fi ;;
-    *) echo "usage: ccmusic play [-s] <file|folder|URL> | pause | resume | next | stop | status"; return 2 ;;
+    *) echo "usage: ccmusic play [-s] <file|folder|URL> | pause | resume | toggle | next | prev | stop | status"; return 2 ;;
   esac
 }
 

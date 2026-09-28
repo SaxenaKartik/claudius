@@ -120,7 +120,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccbranch "<name>"` | Fork a chat's full history into a **new** session (original untouched) |
 | `ccname` | Print THIS chat's name in the map |
-| `ccmusic play [-s] <file\|folder\|URL>` · `pause` · `resume` · `next` · `stop` | Background music while you work (mpv: files, folders, internet radio/stream URLs; falls back to ffplay/afplay). Shows `♪ <title> ▶/⏸` in the status line; `/ccmusic …` inside a chat |
+| `ccmusic play [-s] <file\|folder\|URL>` · `pause` · `resume` · `toggle` · `next` · `prev` · `stop` | Background music while you work (mpv: files, folders, internet radio/stream URLs; falls back to ffplay/afplay). Shows `♪ <title> ▶/⏸` in the status line; `/ccmusic …` inside a chat. On macOS the media keys work too: **F8** play/pause · **F9** next · **F7** previous (any app, incl. Claude) |
 | `ccstatus --install` | Show THIS chat's name in the Claude Code status line (`◆ <name>`), keeping any existing status line above it; `--uninstall` restores it |
 | `ccplay [game]` | Mini games while something runs — **wordle** (dictionary-checked, with a live keyboard tracker), guess, rps, flip, roll, react, math, hangman, scramble, 8ball; no arg = menu |
 | `ccfind "<text>"` | Search names **and** notes |
