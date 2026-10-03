@@ -248,9 +248,9 @@ claude(){ print -r -- "CLAUDE $* @ $PWD"; }           # restore the generic stub
 
 print "===== ccask follow-ups (-m) ====="
 rm -rf "$CLAUDE_CONFIG_DIR/claudius-cache/ask-session"
-out=$(ccask -m "anything" 2>&1); okc "follow-up with no prior ask" "no previous ccask conversation" "$out"
+out=$(_cc_ask_followup "anything" 2>&1); okc "follow-up with no prior ask" "no previous ccask conversation" "$out"
 _cc_ask_save "ORIGINAL PROMPT WITH EXCERPTS" "first q" "first answer"
-out=$(ccask -m "and what about that?" 2>/dev/null)
+out=$(_cc_ask_followup "and what about that?" 2>/dev/null)
 okc "follow-up reuses the saved excerpts" "ORIGINAL PROMPT WITH EXCERPTS" "$out"
 okc "follow-up carries earlier Q&A" "first answer" "$out"
 okc "follow-up sends the new question" "FOLLOW-UP QUESTION: and what about that?" "$out"

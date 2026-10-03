@@ -139,8 +139,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
-    -m, --more      follow up on the LAST answer: reuses the same fetched chats + earlier Q&A, no re-search.
-                    (In a terminal, every answer also offers a '↳ follow-up' prompt; Enter to finish.)
+  After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
+  chats — no re-search; Enter on an empty line finishes.
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
     -r, --refresh   with -s, regenerate the summaries first.
     -a, --all       legacy no-op (cross-chat is now the default).
@@ -1563,7 +1563,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   zmodload zsh/datetime 2>/dev/null; local _t0=${EPOCHREALTIME:-0}   # for the "done" footer
-  local refresh= summary= context= expand=1 targeted= pick= qfile= more=; local -a chats=()
+  local refresh= summary= context= expand=1 targeted= pick= qfile=; local -a chats=()
   [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
     case "$1" in
@@ -1576,8 +1576,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
                     if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"
                     else pick=1; shift; fi ;;                                        # bare -c -> open the picker
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
-      -f|--file)    qfile="${2-}"; shift 2 ;;
-      -m|--more)    more=1; shift ;;            # follow-up on the LAST ccask's fetched chats (no re-search)   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
+      -f|--file)    qfile="${2-}"; shift 2 ;;   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
       *) break ;;
     esac
   done
@@ -1608,17 +1607,11 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     fi
     [[ -z ${q//[[:space:]]/} ]] && { echo 'usage: ccask "<question>"            # or run `ccask` alone to paste a multi-line question
        ccask -f <file>                  # question from a FILE (multi-line / tabbed input)
-       ccask -m "<follow-up>"           # follow up on the LAST answer, same chats, no re-search
        cmd | ccask -                    # question from stdin
        ccask -c                         # pick chat(s), then paste the question
        ccask -c "<chat>" "<question>"   # ask ONE specific chat (also: ccask "<question>" "<chat>")
   flags: -E no synonym expansion · -s from cached summaries (targeted) · -x print context · -a legacy no-op'; return 2; }
     (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
-  fi
-  if [[ -n $more ]]; then                            # -m: continue the previous conversation
-    _cc_ask_followup "$q"; local mrc=$?; _cc_done_line $_t0
-    (( mrc == 1 )) && return 1
-    _cc_ask_loop; return 0
   fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
   [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && { _cc_done_line $_t0; (( rc == 0 )) && { _cc_copy_offer "$_CC_ANSWER_MD"; _cc_ask_loop; }; }; return $rc; }
