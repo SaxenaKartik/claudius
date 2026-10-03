@@ -140,7 +140,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
   After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
-  chats — no re-search; Enter on an empty line finishes.
+  chats — no re-search. Esc, q, or Enter on an empty line finishes.
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
     -r, --refresh   with -s, regenerate the summaries first.
     -a, --all       legacy no-op (cross-chat is now the default).
@@ -1517,11 +1517,19 @@ FOLLOW-UP QUESTION: $q"
 }
 _cc_ask_loop() {   # interactive follow-up loop after an answer (TTY only); Enter on an empty line ends it
   [[ -t 0 && -t 2 ]] || return 0
-  local fq rc t0
+  local fq rc t0 k rest
   while true; do
-    print -u2 -n -- $'\e[36m↳ follow-up\e[0m \e[2m(same chats, no re-search · Enter to finish):\e[0m '
-    IFS= read -r fq || break
-    [[ -z ${fq//[[:space:]]/} ]] && break
+    print -u2 -n -- $'\e[36m↳ follow-up\e[0m \e[2m(same chats, no re-search · Esc / q / Enter to finish):\e[0m '
+    # first key decides: Esc or Enter ends right away (no Ctrl-C needed); anything else starts the question
+    k=; read -rs -k 1 k || break
+    if [[ $k == $'\e' ]]; then
+      while read -rs -t 0.05 -k 1 rest; do :; done   # swallow the rest of an escape sequence (e.g. arrow keys)
+      print -u2 ""; break
+    fi
+    [[ $k == $'\n' || $k == $'\r' ]] && { print -u2 ""; break; }
+    print -u2 -n -- "$k"                              # echo the first key, then read the rest of the line normally
+    IFS= read -r rest; fq="$k$rest"
+    [[ -z ${fq//[[:space:]]/} || ${fq:l} == q || ${fq:l} == quit || ${fq:l} == exit ]] && break
     zmodload zsh/datetime 2>/dev/null; t0=${EPOCHREALTIME:-0}
     _cc_ask_followup "$fq"; rc=$?
     _cc_done_line $t0
