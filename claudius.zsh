@@ -139,6 +139,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
+    -m, --more      follow up on the LAST answer: reuses the same fetched chats + earlier Q&A, no re-search.
+                    (In a terminal, every answer also offers a '↳ follow-up' prompt; Enter to finish.)
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
     -r, --refresh   with -s, regenerate the summaries first.
     -a, --all       legacy no-op (cross-chat is now the default).
@@ -1487,6 +1489,47 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line
+  _cc_ask_save "$prompt" "$q" "$out"         # keep the fetched excerpts so follow-ups don't re-search
+}
+
+# --- ccask follow-ups: keep the fetched context, answer follow-up questions without re-searching -----
+_cc_ask_sdir() { print -r -- "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/ask-session"; }
+_cc_ask_save() {   # $1=full prompt (instructions + excerpts) $2=question $3=answer -> start a new follow-up session
+  local d; d=$(_cc_ask_sdir); mkdir -p "$d"
+  print -r -- "$1" >| "$d/prompt.txt"
+  print -r -- "Q: $2"$'\n'"A: $3"$'\n' >| "$d/qa.md"
+}
+_cc_ask_followup() {   # $1=new question -> answer it from the SAME fetched material + earlier Q&A (one model call)
+  local d q="$1" prompt out; d=$(_cc_ask_sdir)
+  [[ -s "$d/prompt.txt" ]] || { echo "no previous ccask conversation — ask one first: ccask \"<question>\""; return 1; }
+  prompt="$(<"$d/prompt.txt")"$'\n\n'"=== FOLLOW-UP ===
+The question above was already answered. The conversation so far (oldest first):
+$(<"$d/qa.md")
+Now answer this NEW follow-up question using ONLY the same excerpts/material above, with the same rules (cite the chat names; quote exact identifiers; reply with a line beginning exactly 'CANNOT ANSWER:' if the material doesn't contain it; never invent). Use the earlier answers only to resolve references like 'that'/'it'.
+
+FOLLOW-UP QUESTION: $q"
+  out=$(_cc_claude_spin "$prompt")
+  [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
+  _cc_present "$out"; _CC_ANSWER_MD="$out"
+  print -r -- "Q: $q"$'\n'"A: $out"$'\n' >> "$d/qa.md"
+  [[ "$out" == CANNOT\ ANSWER:* ]] && return 3
+  return 0
+}
+_cc_ask_loop() {   # interactive follow-up loop after an answer (TTY only); Enter on an empty line ends it
+  [[ -t 0 && -t 2 ]] || return 0
+  local fq rc t0
+  while true; do
+    print -u2 -n -- $'\e[36m↳ follow-up\e[0m \e[2m(same chats, no re-search · Enter to finish):\e[0m '
+    IFS= read -r fq || break
+    [[ -z ${fq//[[:space:]]/} ]] && break
+    zmodload zsh/datetime 2>/dev/null; t0=${EPOCHREALTIME:-0}
+    _cc_ask_followup "$fq"; rc=$?
+    _cc_done_line $t0
+    if (( rc == 3 )); then
+      local yn; print -u2 -n $'\e[2mNot in these chats. Search ALL your chats for this instead? [y/N] \e[0m'; read -k 1 yn; print -u2 ""
+      [[ "${yn:l}" == y ]] && { ccask "$fq"; return; }
+    fi
+  done
 }
 
 _cc_edit_question() {   # read a (multi-line) question straight from the terminal; result in $_CC_Q (empty = aborted)
@@ -1520,7 +1563,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccask; return 0; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   zmodload zsh/datetime 2>/dev/null; local _t0=${EPOCHREALTIME:-0}   # for the "done" footer
-  local refresh= summary= context= expand=1 targeted= pick= qfile=; local -a chats=()
+  local refresh= summary= context= expand=1 targeted= pick= qfile= more=; local -a chats=()
   [[ ${CCASK_EXPAND:-1} == 0 ]] && expand=          # $CCASK_EXPAND=0 turns expansion off by default
   while [[ "${1-}" == -* ]]; do
     case "$1" in
@@ -1533,7 +1576,8 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
                     if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"
                     else pick=1; shift; fi ;;                                        # bare -c -> open the picker
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
-      -f|--file)    qfile="${2-}"; shift 2 ;;   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
+      -f|--file)    qfile="${2-}"; shift 2 ;;
+      -m|--more)    more=1; shift ;;            # follow-up on the LAST ccask's fetched chats (no re-search)   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
       *) break ;;
     esac
   done
@@ -1564,14 +1608,20 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     fi
     [[ -z ${q//[[:space:]]/} ]] && { echo 'usage: ccask "<question>"            # or run `ccask` alone to paste a multi-line question
        ccask -f <file>                  # question from a FILE (multi-line / tabbed input)
+       ccask -m "<follow-up>"           # follow up on the LAST answer, same chats, no re-search
        cmd | ccask -                    # question from stdin
        ccask -c                         # pick chat(s), then paste the question
        ccask -c "<chat>" "<question>"   # ask ONE specific chat (also: ccask "<question>" "<chat>")
   flags: -E no synonym expansion · -s from cached summaries (targeted) · -x print context · -a legacy no-op'; return 2; }
     (( $# > 0 )) && { chats+=("$@"); targeted=1; }    # trailing names also target specific chats
   fi
+  if [[ -n $more ]]; then                            # -m: continue the previous conversation
+    _cc_ask_followup "$q"; local mrc=$?; _cc_done_line $_t0
+    (( mrc == 1 )) && return 1
+    _cc_ask_loop; return 0
+  fi
   # DEFAULT: no specific chat named -> search across ALL chats (ranked, cited), with query expansion.
-  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && { _cc_done_line $_t0; (( rc == 0 )) && _cc_copy_offer "$_CC_ANSWER_MD"; }; return $rc; }
+  [[ -z $targeted ]] && { _cc_ask_all "$q" "$context" "$expand"; local rc=$?; [[ -z $context ]] && { _cc_done_line $_t0; (( rc == 0 )) && { _cc_copy_offer "$_CC_ANSWER_MD"; _cc_ask_loop; }; }; return $rc; }
   local prompt out ctxmat=
   if [[ -n $summary ]]; then
     # fast/cheap mode: answer from the cached handoff summaries (lossy — misses fine detail)
@@ -1610,8 +1660,10 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"
+  _cc_ask_save "$prompt" "$q" "$out"
   _cc_done_line $_t0
   _cc_copy_offer "$out"
+  _cc_ask_loop
 }
 
 ccfetch() {

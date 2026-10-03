@@ -246,6 +246,16 @@ out=$(ccask -a --context "queue failure" </dev/null 2>&1)
 okn "ccask without -e -> no synonyms" "synonyms:" "$out"
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }           # restore the generic stub for later tests
 
+print "===== ccask follow-ups (-m) ====="
+rm -rf "$CLAUDE_CONFIG_DIR/claudius-cache/ask-session"
+out=$(ccask -m "anything" 2>&1); okc "follow-up with no prior ask" "no previous ccask conversation" "$out"
+_cc_ask_save "ORIGINAL PROMPT WITH EXCERPTS" "first q" "first answer"
+out=$(ccask -m "and what about that?" 2>/dev/null)
+okc "follow-up reuses the saved excerpts" "ORIGINAL PROMPT WITH EXCERPTS" "$out"
+okc "follow-up carries earlier Q&A" "first answer" "$out"
+okc "follow-up sends the new question" "FOLLOW-UP QUESTION: and what about that?" "$out"
+ok "follow-up appended to the log" 1 "$(grep -c '^Q: and what about that?' "$CLAUDE_CONFIG_DIR/claudius-cache/ask-session/qa.md")"
+
 print "===== ccspec ====="
 spec="$SB/alpha.spec.md"
 out=$(ccspec "Alpha" "$spec"); okc "ccspec prints spec to stdout" "$idA.text.md" "$out"
