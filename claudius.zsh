@@ -1182,21 +1182,32 @@ for pair in pairs:
         i += 2; order += 1
         low = text.lower()
         distinct = sum(1 for t in terms if t in low)
-        if distinct:
-            by_chat[path].append((distinct, sum(low.count(t) for t in terms), order, text))
-for k in by_chat: by_chat[k].sort(key=lambda b: (b[0], b[1]), reverse=True)
-# round-robin across chats (best block of chat1, chat2, …, then 2nd-best of each) so every relevant
-# chat is represented and no single noisy chat monopolizes the budget
+        by_chat[path].append((distinct, sum(low.count(t) for t in terms), order, text))
+# the answer to "what happened / how did it end" often sits in the turns AFTER the matching one, which
+# don't repeat the question's words — so each matched turn carries its next FOLLOW turns with it. And
+# the #1 chat, when small, is sent WHOLE: cheap, and nothing in it can be dropped for lacking a keyword.
+follow = int(__import__("os").environ.get("CCASK_FOLLOW", "1"))
+whole = int(__import__("os").environ.get("CCASK_WHOLE_MAX", "15000"))
 keys = list(by_chat.keys())
+units = {}
+for ci, k in enumerate(keys):
+    blocks = by_chat[k]
+    if ci == 0 and blocks and sum(len(b[3]) for b in blocks) <= whole:
+        units[k] = [[(b[2], b[3]) for b in blocks]]; continue
+    hit = sorted((i for i, b in enumerate(blocks) if b[0]), key=lambda i: (blocks[i][0], blocks[i][1]), reverse=True)
+    units[k] = [[(blocks[j][2], blocks[j][3]) for j in range(i, min(i + 1 + follow, len(blocks)))] for i in hit]
+# round-robin across chats (best unit of chat1, chat2, …, then 2nd-best of each) so every relevant
+# chat is represented and no single noisy chat monopolizes the budget
 rr = []
-for r in range(max((len(v) for v in by_chat.values()), default=0)):
+for r in range(max((len(v) for v in units.values()), default=0)):
     for k in keys:
-        if r < len(by_chat[k]):
-            b = by_chat[k][r]; rr.append((k, b[2], b[3]))
-sel = []; used = 0
+        if r < len(units[k]):
+            rr.extend((k, ordr, text) for ordr, text in units[k][r])
+sel = []; used = 0; seen = set()
 for k, ordr, text in rr:
+    if ordr in seen: continue
     if used + len(text) > budget and sel: continue
-    sel.append((k, ordr, text)); used += len(text)
+    sel.append((k, ordr, text)); used += len(text); seen.add(ordr)
     if used >= budget: break
 # output grouped by chat (rank order), blocks in original chronological order
 grouped = OrderedDict((k, []) for k in keys)

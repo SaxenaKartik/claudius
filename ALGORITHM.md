@@ -50,9 +50,13 @@ query is present:
 
 Then **select turns**: split each extract
 into `## USER` / `## ASSISTANT` blocks; score each block by **# of distinct terms** (tiebreak: total
-mentions); drop zero-match blocks; **round-robin across chats** (every chat's best block, then every
-chat's 2nd-best, …) into a size budget so no chat hogs the prompt; re-order chosen blocks
-chronologically per chat under `### From chat: <name>` headers.
+mentions); drop zero-match blocks — but each matched block **carries its next `CCASK_FOLLOW` (1)
+turn(s)** with it, since the outcome ("what happened", "how did it end") usually sits in the reply or
+next message and doesn't repeat the question's words. The **#1 chat is sent whole** when its extract
+is ≤ `CCASK_WHOLE_MAX` (15000) chars — cheap, and nothing in it can be lost for lacking a keyword.
+Then **round-robin across chats** (every chat's best unit, then every chat's 2nd-best, …) into a size
+budget so no chat hogs the prompt; re-order chosen blocks chronologically per chat under
+`### From chat: <name>` headers.
 
 **6 · Answer — the one real model call.** Send **only** those excerpts to `claude -p` with strict
 rules: answer only from them, **cite each chat**, quote exact IDs/commands, else say `CANNOT ANSWER`.
@@ -135,6 +139,8 @@ is unreadable, recency = 0.
 | `CCASK_FREQ_CAP` | 25 | cap on counted matching lines per term |
 | `CCASK_FMSG_ORIG` | 100 | first-message boost per original term (× the term's IDF weight) |
 | `CCASK_FMSG_SYN` | 40 | first-message boost per synonym (× the term's IDF weight) |
+| `CCASK_FOLLOW` | 1 | turns after each matched turn carried into the excerpts |
+| `CCASK_WHOLE_MAX` | 15000 | #1 chat sent whole when its extract is at most this many chars |
 
 IDF presence is a fixed ×1/term. The tier structure (topical-from-start ≫ synonym-topical ≫
 heavy-mention ≫ mere-presence) emerges from these weights times each term's IDF.
