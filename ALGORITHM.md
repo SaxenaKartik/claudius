@@ -73,9 +73,12 @@ that a memory note repeats in every session doesn't get a falsely-high DF and lo
   `CCASK_FREQ_MIN`, capped at `CCASK_FREQ_CAP`.
 - **First-message boost, IDF-weighted** — if a term is in a chat's *first message*, add `w × fmult`
   (`fmult` = `CCASK_FMSG_ORIG` for your words, `CCASK_FMSG_SYN` for synonyms). Because it scales by
-  the term's IDF weight `w`, opening on a **rare topical** word dominates while opening on a **common**
-  word (e.g. "work") barely counts. A handoff / continuation *paste* is not a real opening topic, so
-  it earns no boost — otherwise summary-seeded chats hijack every query.
+  the term's IDF weight `w`, opening on a **rare topical** word dominates. Linear IDF is flat, though
+  (a word in over half the chats still keeps ~half the weight of a rare one), so words that appear in
+  **more than half of all chats earn no opener boost at all** (`CCASK_FMSG_DFK`, default 2 = "more than
+  1/2"; the same cut-off synonym expansion uses). They still count toward body relevance. A handoff /
+  continuation *paste* is not a real opening topic, so for those chats the **name you gave the chat**
+  stands in as the opener — otherwise summary-seeded chats hijack every query, or never rank at all.
 
 Score per chat (with `w = IDF = N − DF + 1`):
 

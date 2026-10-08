@@ -1416,7 +1416,11 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     [[ -n ${issyn[$t]-} ]] && fmult=$fms || fmult=$fmo
     for cf in $mf; do
       ff=${conv2ff[$cf]-}; [[ -z $ff ]] && continue; score[$ff]=$(( ${score[$ff]:-0} + w ))
-      [[ "${fumsg[$ff]-}" == *"$t"* ]] && fmscore[$ff]=$(( ${fmscore[$ff]:-0} + w * fmult ))   # IDF-weighted first-message topical boost
+      # IDF-weighted first-message topical boost — only for DISCRIMINATING words: a word in more than 1/k of all
+      # chats (k = CCASK_FMSG_DFK, default 2 = "more than half", the same cut-off expansion uses) says little about
+      # topic, so it earns no opener boost (body relevance still counts it). Eval: TOP-3 10->12, TOP-5 13->14 of 14.
+      (( ${CCASK_FMSG_DFK:-2} > 0 && df * ${CCASK_FMSG_DFK:-2} > N )) && continue
+      [[ "${fumsg[$ff]-}" == *"$t"* ]] && fmscore[$ff]=$(( ${fmscore[$ff]:-0} + w * fmult ))
     done
     # TERM FREQUENCY (Phase 4, topicality): a chat that mentions a term on MANY lines is ABOUT it —
     # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus.
