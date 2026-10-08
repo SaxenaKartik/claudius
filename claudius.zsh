@@ -1346,13 +1346,17 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # Build the corpus, skipping Claudius' own headless runs AND its "new session seeded with summaries"
   # boilerplate; cache each chat's FIRST message (topic) and count how many ORIGINAL query terms hit it.
   local -a files convfiles; local ff0 fum fl t2 cf=; typeset -A fmsg smsg fumsg conv2ff
+  typeset -A _cc_id2name; local _n _i; while IFS=$'\t' read -r _n _i; do _cc_id2name[$_i]=$_n; done < <(_cc_rows)
   _cc_spin_start "scanning chats"
   for ff0 in $allfiles; do
     _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
     fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null); fl=${fum:l}
     # a handoff / continuation PASTE isn't the chat's real opening topic — blank it so it can't earn the
     # first-message boost (the chat still ranks on its body). Otherwise summary-seeded chats hijack every query.
-    [[ "$fl" == *"starting a new working session. below are handoff"* || "$fl" == *"this session is being continued from a previous conversation"* ]] && fl=""
+    if [[ "$fl" == *"starting a new working session. below are handoff"* || "$fl" == *"this session is being continued from a previous conversation"* ]]; then
+      # handoff/continuation paste isn't the real topic -> fall back to the NAME you gave the chat (a curated topic label)
+      fl=${(L)_cc_id2name[${${ff0:t}:r}]-}
+    fi
     files+=("$ff0"); fumsg[$ff0]=$fl
     cf=$(_cc_conv_file "${${ff0:t}:r}" "$ff0"); convfiles+=("$cf"); conv2ff[$cf]=$ff0   # de-noised grep source (no injected memory)
   done
