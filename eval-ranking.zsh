@@ -22,7 +22,7 @@ source "$SRC" 2>/dev/null || { print -u2 "eval: cannot source $SRC"; exit 2; }
 CASES=${CCASK_EVAL_CASES:-$HOME/.claude/ccask-eval.tsv}
 [[ -f $CASES ]] || { print -u2 "eval: no cases at $CASES (set CCASK_EVAL_CASES). Nothing to check."; exit 0; }
 
-integer n=0 t1=0 t3=0
+integer n=0 t1=0 t3=0 t5=0
 local exp q out rr id e rank top1
 while IFS=$'\t' read -r exp q; do
   [[ -z $q || $exp == \#* ]] && continue
@@ -32,11 +32,11 @@ while IFS=$'\t' read -r exp q; do
     [[ $rr == 1 ]] && top1=${id[1,8]}
     for e in ${(s:|:)exp}; do [[ $id == ${e}* ]] && { rank=$rr; break 2; }; done
   done <<< "$out"
-  (( rank == 1 )) && (( t1++ )); (( rank >= 1 && rank <= 3 )) && (( t3++ ))
+  (( rank == 1 )) && (( t1++ )); (( rank >= 1 && rank <= 3 )) && (( t3++ )); (( rank >= 1 && rank <= 5 )) && (( t5++ ))
   printf '%-2d rank=%-2s  exp=%-24s top1=%-10s | %s\n' $n "$rank" "$exp" "$top1" "${q[1,48]}"
 done < $CASES
 
-printf '\nTOP-1: %d/%d   TOP-3: %d/%d\n' $t1 $n $t3 $n
+printf '\nTOP-1: %d/%d   TOP-3: %d/%d   TOP-5: %d/%d  (answer uses top-5)\n' $t1 $n $t3 $n $t5 $n
 integer min=${CCASK_EVAL_MIN_TOP3:-7}
 (( t3 >= min )) || { print -u2 "REGRESSION: top-3 $t3 < baseline $min"; exit 1; }
 print "OK (top-3 $t3 >= baseline $min)"
