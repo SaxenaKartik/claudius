@@ -209,6 +209,13 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Usage: ccstatus --install     (re)wire it now
          ccstatus --uninstall   restore the previous status line and stop auto-wiring
   Prints your existing status line (if any), then "◆ <name>" (or "unnamed chat").';;
+    ccretention) print -r -- 'ccretention — keep Claude Code chats for a year instead of 30 days.
+  Claude Code deletes transcripts not used for cleanupPeriodDays (default 30) — after that they can
+  no longer be resumed, fetched or searched. On by default: Claudius raises it to 365 the first time
+  it loads (never lowers a bigger value you set). Opt out with CLAUDIUS_NO_RETENTION=1, or --uninstall.
+  Usage: ccretention               show the current limit
+         ccretention --install     (re)apply 365 days now
+         ccretention --uninstall   restore your previous value and stop auto-applying';;
     ccplay)    print -r -- 'ccplay — mini games to pass the time (no session impact).
   Usage: ccplay [game]
   Games: wordle, typeracer, guess, rps, flip, roll, react, math, hangman, scramble, 8ball.
@@ -243,6 +250,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'ccname'                        'print THIS chat'\''s name in the map'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccmusic play|pause|resume|stop' 'background music, shown in the status line (/ccmusic in a chat)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccstatus [--uninstall]'        'THIS chat'\''s name in the Claude status line (on by default)'
+  printf '  \e[36m%-33s\e[0m %s\n' 'ccretention [--uninstall]'     'keep chats 1 year, not Claude'\''s 30-day default (on by default)'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccplay [game]'                 'mini games while Claude thinks (no arg = menu)'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist'                        'picker: type to filter · ↑/↓ · Enter resume · Esc clear/quit'
   printf '  \e[36m%-33s\e[0m %s\n' 'cclist -l'                     'plain list (name + id)'
@@ -2146,8 +2154,53 @@ if (( $+functions[compdef] )) && { [[ ${(t)_comps-} == association* ]] || [[ ${f
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
   compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
-  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay ccmusic claudius cchelp cccache cccleanup
+  compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay ccmusic ccretention claudius cchelp cccache cccleanup
 fi
+
+# --- chat retention: Claude Code deletes transcripts unused for cleanupPeriodDays (default 30) ---------
+# A deleted chat can't be resumed, fetched or searched, so Claudius keeps them for a year by default.
+ccretention() {
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccretention; return 0; }
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  command -v python3 >/dev/null 2>&1 || { echo "ccretention needs python3 (to edit settings.json)"; return 1; }
+  case "${1-}" in --uninstall) : >| "$cfg/claudius-retention-off" ;; --install) rm -f "$cfg/claudius-retention-off" ;; esac
+  CCR_MODE="${1-}" CCR_CFG="$cfg" CCR_DAYS="${CLAUDIUS_RETENTION_DAYS:-365}" python3 - <<'PY'
+import json, os
+cfg=os.environ["CCR_CFG"]; p=os.path.join(cfg,"settings.json"); prevf=os.path.join(cfg,"claudius-retention-prev")
+mode=os.environ["CCR_MODE"]; want=int(os.environ["CCR_DAYS"])
+s=json.load(open(p)) if os.path.exists(p) else {}
+cur=s.get("cleanupPeriodDays")
+if mode=="--install":
+    if isinstance(cur,(int,float)) and cur>=want:
+        print("chats kept for %s days (already >= %d — left as is)" % (cur, want)); raise SystemExit
+    open(prevf,"w").write("unset" if cur is None else str(cur))     # remember what to restore
+    s["cleanupPeriodDays"]=want
+    print("chats now kept for %d days (was %s)" % (want, "30, the default" if cur is None else cur))
+elif mode=="--uninstall":
+    if not os.path.exists(prevf): print("ccretention: nothing to restore (Claudius never changed it)"); raise SystemExit
+    prev=open(prevf).read().strip(); os.remove(prevf)
+    if prev=="unset": s.pop("cleanupPeriodDays",None)
+    else: s["cleanupPeriodDays"]=int(float(prev))
+    print("chat retention restored to %s" % ("Claude's default (30 days)" if prev=="unset" else prev+" days"))
+else:
+    print("chats kept for %s days after last use%s" % (cur if cur is not None else 30, "" if cur is not None else " (Claude's default)"))
+    raise SystemExit
+os.makedirs(cfg, exist_ok=True); json.dump(s,open(p,"w"),indent=2); open(p,"a").write("\n")
+PY
+}
+
+# Cheap on every source: a grep of settings.json; only edits it when the limit is missing or below
+# 365. Skipped if the user opted out (CLAUDIUS_NO_RETENTION=1 or after `ccretention --uninstall`).
+_cc_retention_autowire() {
+  [[ -n ${CLAUDIUS_NO_RETENTION-} ]] && return 0
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" n
+  [[ -d "$cfg" && ! -e "$cfg/claudius-retention-off" ]] || return 0
+  n=$(grep -oE '"cleanupPeriodDays": *[0-9]+' "$cfg/settings.json" 2>/dev/null | grep -oE '[0-9]+$')
+  [[ -n $n ]] && (( n >= ${CLAUDIUS_RETENTION_DAYS:-365} )) && return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  ccretention --install >/dev/null 2>&1
+}
+_cc_retention_autowire
 
 # --- status line on by default: show "◆ <chat name>" in Claude Code's status line --------------
 # Cheap on every source: a grep of settings.json; only edits it when not yet wired. Skipped if the

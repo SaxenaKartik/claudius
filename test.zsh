@@ -126,7 +126,22 @@ CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okc "autowire on source" "ccstatus
 CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'; ccstatus --uninstall" >/dev/null
 CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okn "no re-wire after --uninstall" "ccstatus" "$(cat $AW/settings.json 2>/dev/null)"
 rm -rf $AW; AW=$(mktemp -d)
-CLAUDE_CONFIG_DIR=$AW CLAUDIUS_NO_STATUSLINE=1 zsh -c "source '$HLP'"; [[ -f $AW/settings.json ]]; okrc "CLAUDIUS_NO_STATUSLINE opt-out" 1 $?
+CLAUDE_CONFIG_DIR=$AW CLAUDIUS_NO_STATUSLINE=1 zsh -c "source '$HLP'"; okn "CLAUDIUS_NO_STATUSLINE opt-out" "ccstatus" "$(cat $AW/settings.json 2>/dev/null)"
+rm -rf $AW
+
+print "===== ccretention ====="
+AW=$(mktemp -d)
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okc "retention autowired to 365 on source" '"cleanupPeriodDays": 365' "$(cat $AW/settings.json 2>/dev/null)"
+out=$(CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'; ccretention"); okc "ccretention shows the limit" "365 days" "$out"
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'; ccretention --uninstall" >/dev/null
+okn "ccretention --uninstall restores Claude default (key removed)" "cleanupPeriodDays" "$(cat $AW/settings.json 2>/dev/null)"
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okn "no re-apply after ccretention --uninstall" "cleanupPeriodDays" "$(cat $AW/settings.json 2>/dev/null)"
+rm -rf $AW; AW=$(mktemp -d); print -r -- '{"cleanupPeriodDays": 9999}' > $AW/settings.json
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'"; okc "never lowers a bigger value" '"cleanupPeriodDays": 9999' "$(cat $AW/settings.json)"
+rm -rf $AW; AW=$(mktemp -d); print -r -- '{"cleanupPeriodDays": 60}' > $AW/settings.json
+CLAUDE_CONFIG_DIR=$AW zsh -c "source '$HLP'; ccretention --uninstall" >/dev/null; okc "uninstall restores a previous custom value" '"cleanupPeriodDays": 60' "$(cat $AW/settings.json)"
+rm -rf $AW; AW=$(mktemp -d)
+CLAUDE_CONFIG_DIR=$AW CLAUDIUS_NO_RETENTION=1 zsh -c "source '$HLP'"; okn "CLAUDIUS_NO_RETENTION opt-out" "cleanupPeriodDays" "$(cat $AW/settings.json 2>/dev/null)"
 rm -rf $AW
 
 print "===== ccmusic (stub player, silent) ====="

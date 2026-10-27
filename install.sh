@@ -36,7 +36,10 @@ say() { printf '%s\n' "$*"; }
 if [ "${1:-}" = "--uninstall" ]; then
   # restore the previous Claude status line (if Claudius wired it) before the helper goes away
   [ -f "$HELPER" ] && command -v zsh >/dev/null 2>&1 && zsh -c "source \"$HELPER\" && ccstatus --uninstall" >/dev/null 2>&1 || true
+  # restore the chat-retention limit Claudius raised (Claude Code's default is 30 days)
+  [ -f "$HELPER" ] && command -v zsh >/dev/null 2>&1 && zsh -c "source \"$HELPER\" && ccretention --uninstall" >/dev/null 2>&1 || true
   rm -f "$CLAUDE_DIR/claudius-statusline-off"
+  rm -f "$CLAUDE_DIR/claudius-retention-off"
   rm -f "$HELPER"
   for c in $CMDS; do rm -f "$CMD_DIR/$c.md"; done
   if [ -f "$RC" ] && grep -q "claudius.zsh" "$RC" 2>/dev/null; then
@@ -108,5 +111,6 @@ say "Claudius installed."
 say "  helper  : $HELPER"
 say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccrename /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay /ccmusic in a chat)"
 say "  map     : $MAP"
+say "  chats   : kept 1 year after last use (Claude Code's default is 30 days) — on first load; opt out: CLAUDIUS_NO_RETENTION=1"
 say ""
 say "Reload now:  source \"$RC\"     then run:  claudius  (walkthrough)  ·  cchelp  (all commands)"
