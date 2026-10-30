@@ -1212,6 +1212,15 @@ for r in range(max((len(v) for v in units.values()), default=0)):
         if r < len(units[k]):
             rr.extend((k, ordr, text) for ordr, text in units[k][r])
 sel = []; used = 0; seen = set()
+# pass 1: a rank-weighted share of the budget per chat (the best match gets the most room, so its details
+# aren't squeezed out by four weaker chats); pass 2: round-robin whatever space is left.
+share = [int(x) for x in __import__("os").environ.get("CCASK_SHARE", "34,24,18,13,11").split(",") if x.strip()]
+for ci, k in enumerate(keys):
+    cap = budget * (share[ci] if ci < len(share) else 0) // 100; got = 0
+    for u in units[k]:
+        for ordr, text in u:
+            if ordr in seen or got + len(text) > cap: continue
+            sel.append((k, ordr, text)); used += len(text); got += len(text); seen.add(ordr)
 for k, ordr, text in rr:
     if ordr in seen: continue
     if used + len(text) > budget and sel: continue
@@ -1377,6 +1386,13 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
       # handoff/continuation paste isn't the real topic -> fall back to the NAME you gave the chat (a curated topic label)
       fl=${(L)_cc_id2name[${${ff0:t}:r}]-}
     fi
+    # an opener that is just a link or a few words ("go through this doc: <url>" — common when a chat starts from a pasted link) names no
+    # topic; the assistant's first substantial reply says what the doc/alarm/ticket is about, so it stands in.
+    local om=${fl#*\"content\":\"}; om=${om%%\"*}; om=${om//http[^ ]#/}
+    if [[ $om != "$fl" ]] && (( ${#${=om}} < ${CCASK_SHORT_OPENER:-8} )); then
+      # first SUBSTANTIAL reply (skips "let me fetch that for you"): it summarises what was fetched
+      fl+=" ${(L)$(LC_ALL=C grep -m8 '"type":"assistant"' "$ff0" 2>/dev/null | awk 'length > 600 { print substr($0, 1, 1500); exit }')}"
+    fi
     files+=("$ff0"); fumsg[$ff0]=$fl
     cf=$(_cc_conv_file "${${ff0:t}:r}" "$ff0"); convfiles+=("$cf"); conv2ff[$cf]=$ff0   # de-noised grep source (no injected memory)
   done
@@ -1513,7 +1529,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     print -r -- "$excerpts"; return 0
   fi
   local prompt out
-  prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
+  prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. Include EVERY specific detail in the excerpts that bears on the question — commands, paths, URLs, ports, flags, branch names, numbers, and the reason and outcome — even if that makes the answer longer; do not summarise them away. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line

@@ -54,7 +54,7 @@ mentions); drop zero-match blocks — but each matched block **carries its next 
 turn(s)** with it, since the outcome ("what happened", "how did it end") usually sits in the reply or
 next message and doesn't repeat the question's words. The **#1 chat is sent whole** when its extract
 is ≤ `CCASK_WHOLE_MAX` (15000) chars — cheap, and nothing in it can be lost for lacking a keyword.
-Then **round-robin across chats** (every chat's best unit, then every chat's 2nd-best, …) into a size
+The budget is **shared by rank** (`CCASK_SHARE`, default 34/24/18/13/11 %): the best-ranked chat gets the most room, so its details aren't squeezed out by four weaker chats; space a chat doesn't use goes back to the pool. Then **round-robin across chats** (every chat's best unit, then every chat's 2nd-best, …) into a size
 budget so no chat hogs the prompt; re-order chosen blocks chronologically per chat under
 `### From chat: <name>` headers.
 
@@ -82,7 +82,7 @@ that a memory note repeats in every session doesn't get a falsely-high DF and lo
   **more than half of all chats earn no opener boost at all** (`CCASK_FMSG_DFK`, default 2 = "more than
   1/2"; the same cut-off synonym expansion uses). They still count toward body relevance. A handoff /
   continuation *paste* is not a real opening topic, so for those chats the **name you gave the chat**
-  stands in as the opener — otherwise summary-seeded chats hijack every query, or never rank at all.
+  stands in as the opener — otherwise summary-seeded chats hijack every query, or never rank at all. Likewise an opener that is just a link or a few words ("go through this doc: <url>", common when a chat starts from a pasted link) is extended with the assistant's first substantial reply, which says what the doc or alarm is about.
 
 Score per chat (with `w = IDF = N − DF + 1`):
 
@@ -139,6 +139,8 @@ is unreadable, recency = 0.
 | `CCASK_FREQ_CAP` | 25 | cap on counted matching lines per term |
 | `CCASK_FMSG_ORIG` | 100 | first-message boost per original term (× the term's IDF weight) |
 | `CCASK_FMSG_SYN` | 40 | first-message boost per synonym (× the term's IDF weight) |
+| `CCASK_SHARE` | 34,24,18,13,11 | % of the excerpt budget reserved for the #1…#5 chat (rest is round-robin) |
+| `CCASK_SHORT_OPENER` | 8 | an opener with fewer words than this borrows the assistant's first substantial reply |
 | `CCASK_EXCLUDE` | — | space/comma-separated 8-char session-id prefixes to leave out of the corpus (e.g. a chat that holds an eval's answer key) |
 | `CCASK_FOLLOW` | 1 | turns after each matched turn carried into the excerpts |
 | `CCASK_WHOLE_MAX` | 15000 | #1 chat sent whole when its extract is at most this many chars |
