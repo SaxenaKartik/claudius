@@ -1413,9 +1413,11 @@ for p in paths:
     if txt: cards.append((p, txt))
 if not cards: sys.exit(0)
 cat = "\n\n".join(f"[C{i+1}]\n{t}" for i, (_, t) in enumerate(cards))
-prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats. A developer asks:\nQUESTION: {os.environ['CCR_Q']}\n"
+# card list FIRST, question LAST: the long, unchanging card list is then a reusable (cacheable) prefix
+prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats.\n\n" + cat +
+          f"\n\nA developer asks:\nQUESTION: {os.environ['CCR_Q']}\n"
           "Which chats most likely contain the answer? Judge by MEANING, not shared words. "
-          "Return ONLY the 10 best card labels, best first, comma-separated (e.g. C12, C3, ...).\n\n" + cat)
+          "Return ONLY the 10 best card labels, best first, comma-separated (e.g. C12, C3, ...).")
 m = os.environ.get("CCR_MODEL", "")
 r = subprocess.run(["claude", "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL)
@@ -1425,6 +1427,36 @@ for lab in re.findall(r"C(\d+)", r.stdout):
     if 0 <= i < len(cards) and cards[i][0] not in seen: seen.append(cards[i][0])
 print("\n".join(seen[:10]))
 PY
+}
+
+_cc_term_counts() {   # $1=terms (space-separated) rest=files -> "term<TAB>file<TAB>matching-lines" (whole-word, case-insensitive)
+  # ONE read of every file for ALL terms, instead of 2-3 greps per term (~10x faster on big histories).
+  # Falls back to per-term grep when python3 is missing.
+  local terms="$1"; shift; (( $# )) || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$terms" "$@" <<'PY' 2>/dev/null
+import re, sys, collections
+terms = [t for t in dict.fromkeys(sys.argv[1].lower().split()) if t]; files = sys.argv[2:]
+if not terms: sys.exit(0)
+rx = re.compile(rb'(?<![A-Za-z0-9_])(' + b'|'.join(re.escape(t.encode()) for t in sorted(terms, key=len, reverse=True)) + rb')(?![A-Za-z0-9_])', re.I)
+out = sys.stdout
+for f in files:
+    c = collections.Counter()
+    try:
+        with open(f, 'rb') as fh:
+            for line in fh:
+                for t in {m.lower() for m in rx.findall(line)}: c[t] += 1
+    except OSError: continue
+    for t, n in c.items(): out.write(f"{t.decode(errors='ignore')}\t{f}\t{n}\n")
+PY
+  else
+    local t= l=
+    for t in ${=terms}; do
+      for l in ${(f)"$(LC_ALL=C grep -ciFw -- "$t" "$@" /dev/null 2>/dev/null)"}; do
+        [[ ${l##*:} == 0 ]] || print -r -- "${(L)t}"$'\t'"${l%:*}"$'\t'"${l##*:}"
+      done
+    done
+  fi
 }
 
 _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from the top few, cite them
@@ -1468,6 +1500,21 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   _cc_spin_stop
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
   local N=${#files}
+  # meaning ranking runs IN PARALLEL with the keyword pass below (they don't depend on each other)
+  local cardtmp= cardpid=
+  if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
+    _cc_cards_ensure $files
+    cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null & cardpid=$!; }
+  fi
+  # one-pass term counts: _cc_tcfiles[term] = files containing it, _cc_tccount[term<TAB>file] = matching lines
+  typeset -A _cc_tcfiles _cc_tccount _cc_tcdone
+  _cc_tc_load() { local -a want=(); local tt= l= f= c=
+    for tt in ${=1}; do tt=${(L)tt}; [[ -z ${_cc_tcdone[$tt]-} ]] && { want+=("$tt"); _cc_tcdone[$tt]=1; }; done
+    (( ${#want} )) || return 0
+    for l in ${(f)"$(_cc_term_counts "${want[*]}" $convfiles)"}; do
+      tt=${l%%$'\t'*}; l=${l#*$'\t'}; f=${l%$'\t'*}; c=${l##*$'\t'}
+      _cc_tcfiles[$tt]+="$f "; _cc_tccount[$tt$'\t'$f]=$c
+    done; }
   # -e/--expand ($3): widen recall with Claude-suggested synonyms — but ONLY for the DISCRIMINATING
   # (high-IDF) query words. A word in > half the chats can't separate one chat from another, so
   # expanding it just adds noise; expand only the rare, topical words (df computed up front here).
@@ -1479,8 +1526,9 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     # ranking will find the right chats on its own -> SKIP the call. Only when NO original term discriminates
     # (all absent, or all ubiquitous = a vocabulary gap) do we spend the call. `-e` forces it regardless.
     local t2= tdf=; local -a dft=(); integer useful=0
+    _cc_tc_load "${qt[*]}"
     for t2 in $qt; do
-      tdf=$(LC_ALL=C grep -lFw -- "$t2" $convfiles 2>/dev/null | grep -c .)   # whole-word df (conversation-only): "director" != "directory"
+      tdf=${#${(s: :)${_cc_tcfiles[${(L)t2}]-}}}                             # whole-word df (conversation-only), from the one-pass counts
       dft+=("$(printf '%06d' $tdf):$t2")
       (( tdf > 0 && tdf * 2 <= N )) && (( useful++ ))                        # a term that appears AND discriminates
     done
@@ -1514,8 +1562,9 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   typeset -A issyn; for t in $et; do issyn[$t]=1; done
   # Grep the CONVERSATION-ONLY copies (convfiles), not raw jsonl, so injected MEMORY.md / reminders
   # don't inflate df; score/freq stay keyed by the ORIGINAL path via conv2ff.
+  _cc_tc_load "${at[*]}"                         # one pass for every term not counted yet
   for t in $at; do                              # $at = query terms + any -e synonyms
-    mf=(${(f)"$(LC_ALL=C grep -liFw -- "$t" $convfiles 2>/dev/null)"})   # whole-word match ("director" not "directory")
+    mf=(${(s: :)${_cc_tcfiles[${(L)t}]-}})       # files with a whole-word match ("director" not "directory")
     df=${#mf}; (( df == 0 )) && continue
     w=$(( N - df + 1 ))
     [[ -n ${issyn[$t]-} ]] && fmult=$fms || fmult=$fmo
@@ -1531,8 +1580,8 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     # even if its first message wasn't (mid-chat drift). Only heavy mentions (>= tfmin) add a bonus.
     # `grep -cF ... /dev/null` forces per-file "path:count" output even for a SINGLE match (grep drops
     # the filename otherwise), so tfile always maps back via conv2ff.
-    for tline in ${(f)"$(LC_ALL=C grep -cFw -- "$t" $mf /dev/null 2>/dev/null)"}; do
-      tfile=${tline%:*}; tcnt=${tline##*:}; ff=${conv2ff[$tfile]-}
+    for tfile in $mf; do
+      tcnt=${_cc_tccount[${(L)t}$'\t'$tfile]:-0}; ff=${conv2ff[$tfile]-}
       [[ -n $ff ]] && (( tcnt >= tfmin )) && freq[$ff]=$(( ${freq[$ff]:-0} + (tcnt < tfcap ? tcnt : tfcap) * w ))
     done
   done
@@ -1562,9 +1611,9 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # meaning ranking (default on): cards pick the chats that are ABOUT the question; the #1 keyword match is
   # always kept too, so an exact detail (a flag, a file, "CSV vs PDF") still wins when you name it.
   local -a cardtop=()
-  if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
-    _cc_cards_ensure $files
-    _cc_spin_start "ranking by meaning"; cardtop=(${(f)"$(_cc_card_rank "$q" $files)"}); _cc_spin_stop
+  if [[ -n $cardpid ]]; then
+    _cc_spin_start "ranking by meaning"; wait $cardpid 2>/dev/null; _cc_spin_stop
+    cardtop=(${(f)"$(<"$cardtmp")"}); rm -f "$cardtmp"
   fi
   (( ${#scored} == 0 && ${#cardtop} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
   (( ${#scored} )) && scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
