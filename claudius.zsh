@@ -1369,6 +1369,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   _cc_spin_start "scanning chats"
   for ff0 in $allfiles; do
     _cc_is_ephemeral "$ff0" && continue   # skip Claudius' own one-shots / seeded sessions (see helper)
+    [[ -n ${CCASK_EXCLUDE-} && " ${CCASK_EXCLUDE//,/ } " == *" ${${ff0:t}[1,8]} "* ]] && continue   # caller-excluded chats (8-char id prefixes)
     fum=$(grep -m1 '"type":"user"' "$ff0" 2>/dev/null); fl=${fum:l}
     # a handoff / continuation PASTE isn't the chat's real opening topic — blank it so it can't earn the
     # first-message boost (the chat still ranks on its body). Otherwise summary-seeded chats hijack every query.

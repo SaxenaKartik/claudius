@@ -139,6 +139,7 @@ is unreadable, recency = 0.
 | `CCASK_FREQ_CAP` | 25 | cap on counted matching lines per term |
 | `CCASK_FMSG_ORIG` | 100 | first-message boost per original term (× the term's IDF weight) |
 | `CCASK_FMSG_SYN` | 40 | first-message boost per synonym (× the term's IDF weight) |
+| `CCASK_EXCLUDE` | — | space/comma-separated 8-char session-id prefixes to leave out of the corpus (e.g. a chat that holds an eval's answer key) |
 | `CCASK_FOLLOW` | 1 | turns after each matched turn carried into the excerpts |
 | `CCASK_WHOLE_MAX` | 15000 | #1 chat sent whole when its extract is at most this many chars |
 
