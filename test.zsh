@@ -39,6 +39,7 @@ print -r -- '{"type":"summary","cwd":"'"$WSB"'","usage":{"output_tokens":12000}}
 
 unset CLAUDE_CODE_SESSION_ID   # isolate: don't inherit the real session's id
 export CCASK_EXPAND=0          # deterministic: expansion off by default in tests; -e turns it on explicitly
+export CCASK_CARDS=0           # deterministic: meaning cards off by default in tests; the card tests turn them on
 _CC_COMPDEF_ARGS=""; compdef(){ _CC_COMPDEF_ARGS+=" $*"; }   # stub accumulates registrations
 source "$CLAUDE_CONFIG_DIR/claudius.zsh"
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }   # stub (overrides PATH); prints all args
@@ -202,6 +203,14 @@ out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No sessi
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
 okn "ccask -a no var-decl leak" "base=" "$out"   # guard the zsh 'bare local of a set var prints it' gotcha
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
+# meaning cards: a card ranker pick comes first, the #1 keyword match is still kept, cards are cached
+CDIR="$CLAUDE_CONFIG_DIR/claudius-cache"; mkdir -p "$CDIR"
+claude(){ if [[ "$*" == *"retrieval card"* ]]; then print -r -- "TITLE: card for a chat"; elif [[ "$*" == *"Which chats most likely"* ]]; then print -r -- "C1"; else print -r -- "CLAUDE $* @ $PWD"; fi; }
+rm -f "$CDIR"/*.card.md
+out=$(CCASK_CARDS=1 CCASK_DEBUG_RANK=1 ccask -a "zznomatchword" </dev/null 2>/dev/null); okc "cards: meaning pick ranks even with no keyword match" "1	" "$out"
+ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "cards: built and cached" 0 $?
+okc "cards: card records source size" "claudius-card v1 bytes=" "$(head -1 "$CDIR"/*.card.md(N[1]) 2>/dev/null)"
+claude(){ print -r -- "CLAUDE $* @ $PWD"; }
 # NEW DEFAULT: no chat named -> cross-chat search (what -a used to require)
 out=$(ccask "preview" </dev/null 2>&1);          okc "ccask default (no name) = cross-chat" "MULTIPLE past coding chats" "$out"
 # TARGETED: -c "<chat>" scopes to one chat (reads its extract, NOT the cross-chat ranker)

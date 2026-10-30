@@ -28,6 +28,14 @@ sessions (headless one-shots, seed sessions, slash-command runs) so the tool's o
 pollute results. Ranking greps these **raw** transcripts directly; the compact extract isn't built
 yet (that's step 5, only for chats that survive ranking).
 
+**4a · Rank by MEANING — one small model call (default on).** Every chat has a short cached *card* (topic,
+systems, problems, decisions, fixes, outcome), written once and rebuilt only when the chat has grown a lot.
+A small model (Haiku) reads all cards and picks the chats that are *about* the question. The top 5 are the
+best 4 card picks **plus the #1 keyword match** (so an exact detail you name — a flag, a file, "CSV vs PDF" —
+still wins). Cards only choose chats; the answer is still built from the chats' real turns. `CCASK_CARDS=0`
+turns it off (keyword ranking only). On the 93-question benchmark this moved the source chat into the top 5
+for 91/93 questions (keyword alone: 63–66).
+
 **4 · Rank every chat — local `grep`, milliseconds, no model.** See scoring below. Sort, keep the
 top `CCASK_TOPK` (default 5); chats matching nothing score 0 and are dropped.
 
@@ -141,6 +149,8 @@ is unreadable, recency = 0.
 | `CCASK_FMSG_SYN` | 40 | first-message boost per synonym (× the term's IDF weight) |
 | `CCASK_SHARE` | 34,24,18,13,11 | % of the excerpt budget reserved for the #1…#5 chat (rest is round-robin) |
 | `CCASK_SHORT_OPENER` | 8 | an opener with fewer words than this borrows the assistant's first substantial reply |
+| `CCASK_CARDS` | 1 | meaning ranking via cached chat cards (0 = keyword only) |
+| `CCASK_CARD_MODEL` / `CCASK_CARD_RANK_MODEL` | sonnet / haiku | model that writes cards / picks chats from them |
 | `CCASK_EXCLUDE` | — | space/comma-separated 8-char session-id prefixes to leave out of the corpus (e.g. a chat that holds an eval's answer key) |
 | `CCASK_FOLLOW` | 1 | turns after each matched turn carried into the excerpts |
 | `CCASK_WHOLE_MAX` | 15000 | #1 chat sent whole when its extract is at most this many chars |

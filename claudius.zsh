@@ -1358,6 +1358,75 @@ _cc_label_for() {   # $1=id $2=jsonl -> display label: mapped name, else first m
   print -r -- "${id:0:8}…"
 }
 
+# --- meaning cards: rank chats by what they're ABOUT, not by shared words ---------------------------
+# One short card per chat (topic, systems, problems, decisions, fixes, outcome), cached next to the
+# extract and rebuilt when the chat has grown. A small model reads every card and picks the chats that
+# are about the question. The answer is still built from the chats' real turns — cards only choose.
+_cc_cards_ensure() {   # args: transcript paths -> build missing/stale cards (parallel, cached)
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" f id cf n cur ex; local -a need=()
+  mkdir -p "$cdir"
+  for f in "$@"; do
+    id=${${f:t}:r}; cf="$cdir/$id.card.md"; cur=$(wc -c < "$f" 2>/dev/null); cur=${cur// /}
+    n=; [[ -s $cf ]] && n=$(head -1 "$cf" | sed -n 's/.*bytes=\([0-9]*\).*/\1/p')
+    # rebuild only when the chat grew a lot since its card (not on every message of a live chat)
+    if [[ -z $n ]] || (( cur - n > (n / 5 > 51200 ? n / 5 : 51200) )); then need+=("$f"); fi
+  done
+  (( ${#need} == 0 )) && return 0
+  _cc_spin_start "writing meaning cards for ${#need} chat(s) (one-time; cached)"
+  local cm=${CCASK_CARD_MODEL-sonnet} j=0
+  for f in $need; do
+    (
+      id=${${f:t}:r}; cf="$cdir/$id.card.md"; ex=$(_cc_transcript_text "$id" "$f" 2>/dev/null); [[ -s $ex ]] || exit 0
+      cur=$(wc -c < "$f"); cur=${cur// /}
+      local body="$(head -c 70000 "$ex")"$'\n…\n'"$(tail -c 20000 "$ex")"
+      local out; out=$(claude -p ${cm:+--model $cm} --no-session-persistence "Write a retrieval card for the past AI-assistant chat below, so a search tool can tell what this chat is ABOUT.
+Plain text, at most 1200 characters:
+TITLE: <a specific one-line title>
+- main topic and goal
+- systems, services, pages, tools, teams and files involved (use their real names)
+- problems investigated and root causes found
+- decisions made and why
+- changes or fixes shipped, and the outcome
+- other names or aliases someone might use for these
+No preamble.
+
+=== CHAT ===
+$body" </dev/null 2>/dev/null)
+      [[ -n $out ]] && { print -r -- "<!-- claudius-card v1 bytes=$cur -->"; print -r -- "$out"; } >| "$cf.tmp" && mv -f "$cf.tmp" "$cf"
+    ) &
+    (( ++j % 6 == 0 )) && wait
+  done
+  wait; _cc_spin_stop
+}
+
+_cc_card_rank() {   # $1=question, rest = transcript paths -> prints up to 10 paths, most relevant first ('' on failure)
+  local q="$1"; shift
+  command -v python3 >/dev/null 2>&1 || return 0
+  CCR_Q="$q" CCR_CDIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" CCR_MODEL="${CCASK_CARD_RANK_MODEL-haiku}" \
+    python3 - "$@" <<'PY' 2>/dev/null
+import os, re, subprocess, sys
+paths = sys.argv[1:]; cdir = os.environ["CCR_CDIR"]; cards = []
+for p in paths:
+    cf = os.path.join(cdir, os.path.splitext(os.path.basename(p))[0] + ".card.md")
+    try: txt = open(cf, errors="ignore").read().split("\n", 1)[1].strip()[:1300]
+    except Exception: continue
+    if txt: cards.append((p, txt))
+if not cards: sys.exit(0)
+cat = "\n\n".join(f"[C{i+1}]\n{t}" for i, (_, t) in enumerate(cards))
+prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats. A developer asks:\nQUESTION: {os.environ['CCR_Q']}\n"
+          "Which chats most likely contain the answer? Judge by MEANING, not shared words. "
+          "Return ONLY the 10 best card labels, best first, comma-separated (e.g. C12, C3, ...).\n\n" + cat)
+m = os.environ.get("CCR_MODEL", "")
+r = subprocess.run(["claude", "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
+                   capture_output=True, text=True, stdin=subprocess.DEVNULL)
+seen = []
+for lab in re.findall(r"C(\d+)", r.stdout):
+    i = int(lab) - 1
+    if 0 <= i < len(cards) and cards[i][0] not in seen: seen.append(cards[i][0])
+print("\n".join(seen[:10]))
+PY
+}
+
 _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from the top few, cite them
   local q="$1" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   # query terms: lowercase, keep alphanumeric words >=3 chars that aren't stopwords
@@ -1490,13 +1559,27 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     scored+=("$(printf '%013.3f' $final)"$'\t'"$ff")   # zero-pad so lexical sort == numeric sort
   done
   _cc_spin_stop
-  (( ${#scored} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
-  scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
+  # meaning ranking (default on): cards pick the chats that are ABOUT the question; the #1 keyword match is
+  # always kept too, so an exact detail (a flag, a file, "CSV vs PDF") still wins when you name it.
+  local -a cardtop=()
+  if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
+    _cc_cards_ensure $files
+    _cc_spin_start "ranking by meaning"; cardtop=(${(f)"$(_cc_card_rank "$q" $files)"}); _cc_spin_stop
+  fi
+  (( ${#scored} == 0 && ${#cardtop} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
+  (( ${#scored} )) && scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
   local K=${CCASK_TOPK:-5}
-  local -a top=(${scored[1,K]})
+  local -a kwfiles=(${scored[@]#*$'\t'}) pick=(); local x=
+  if (( ${#cardtop} )); then
+    for x in ${cardtop[1,K-1]} ${kwfiles[1]} ${cardtop[K,-1]} $kwfiles; do
+      [[ -n $x ]] && (( ! ${pick[(Ie)$x]} )) && pick+=("$x"); (( ${#pick} >= K )) && break
+    done
+  else
+    pick=(${kwfiles[1,K]})
+  fi
   local line= f2= id2= tf=; local -a pairs labels topfiles topids   # explicit = : bare re-decl of an already-set var prints it in zsh
-  for line in "${top[@]}"; do
-    f2=${line#*$'\t'}; id2=${${f2:t}:r}
+  for f2 in "${pick[@]}"; do
+    id2=${${f2:t}:r}
     topfiles+=("$f2"); topids+=("$id2"); labels+=("$(_cc_label_for "$id2" "$f2")")
   done
   print -u2 -- $'\e[2mMost relevant: '"${(j:, :)labels}"$'\e[0m'   # show the chats up front, before the (slower) query-aware build
