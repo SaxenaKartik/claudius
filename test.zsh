@@ -206,6 +206,9 @@ out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none o
 # meaning cards: a card ranker pick comes first, the #1 keyword match is still kept, cards are cached
 CDIR="$CLAUDE_CONFIG_DIR/claudius-cache"; mkdir -p "$CDIR"
 claude(){ if [[ "$*" == *"retrieval card"* ]]; then print -r -- "TITLE: card for a chat"; elif [[ "$*" == *"Which chats most likely"* ]]; then print -r -- "C1"; else print -r -- "CLAUDE $* @ $PWD"; fi; }
+STUBC="$CLAUDE_CONFIG_DIR/claude-stub"; print -r -- '#!/bin/sh
+case "$*" in *"retrieval card"*) echo "TITLE: card for a chat";; *"Which chats most likely"*) echo "C1";; *) echo "CLAUDE $*";; esac' >| "$STUBC"; chmod +x "$STUBC"
+export CCASK_CLAUDE_BIN="$STUBC"   # python-side model calls use this stub too (they can't see the shell function)
 rm -f "$CDIR"/*.card.md
 out=$(CCASK_CARDS=1 CCASK_DEBUG_RANK=1 ccask -a "zznomatchword" </dev/null 2>/dev/null); okc "cards: meaning pick ranks even with no keyword match" "1	" "$out"
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "cards: built and cached" 0 $?

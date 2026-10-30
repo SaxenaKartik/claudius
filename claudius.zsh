@@ -1366,20 +1366,24 @@ _cc_cards_ensure() {   # args: transcript paths -> build missing/stale cards (pa
   local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" f id cf n cur ex; local -a need=()
   mkdir -p "$cdir"
   for f in "$@"; do
-    id=${${f:t}:r}; cf="$cdir/$id.card.md"; cur=$(wc -c < "$f" 2>/dev/null); cur=${cur// /}
+    id=${${f:t}:r}; cf="$cdir/$id.card.md"; cur=0; local -a st=(); zstat -A st +size "$f" 2>/dev/null && cur=${st[1]}   # size from the inode, not by reading a 100+ MB file
     n=; [[ -s $cf ]] && n=$(head -1 "$cf" | sed -n 's/.*bytes=\([0-9]*\).*/\1/p')
     # rebuild only when the chat grew a lot since its card (not on every message of a live chat)
     if [[ -z $n ]] || (( cur - n > (n / 5 > 51200 ? n / 5 : 51200) )); then need+=("$f"); fi
   done
   (( ${#need} == 0 )) && return 0
   _cc_spin_start "writing meaning cards for ${#need} chat(s) (one-time; cached)"
-  local cm=${CCASK_CARD_MODEL-sonnet} j=0
+  # build the extracts here (shell helper), then let python run the model calls in parallel — zsh background
+  # jobs get suspended when the claude CLI touches the terminal, so job control isn't reliable for this
+  local -a jobs=(); local ex2=
   for f in $need; do
-    (
-      id=${${f:t}:r}; cf="$cdir/$id.card.md"; ex=$(_cc_transcript_text "$id" "$f" 2>/dev/null); [[ -s $ex ]] || exit 0
-      cur=$(wc -c < "$f"); cur=${cur// /}
-      local body="$(head -c 70000 "$ex")"$'\n…\n'"$(tail -c 20000 "$ex")"
-      local out; out=$(claude -p ${cm:+--model $cm} --no-session-persistence "Write a retrieval card for the past AI-assistant chat below, so a search tool can tell what this chat is ABOUT.
+    ex2=$(_cc_transcript_text "${${f:t}:r}" "$f" 2>/dev/null); [[ -s $ex2 ]] && jobs+=("$f"$'\t'"$ex2")
+  done
+  command -v python3 >/dev/null 2>&1 && (( ${#jobs} )) && \
+  CCC_DIR="$cdir" CCC_MODEL="${CCASK_CARD_MODEL-sonnet}" python3 - "${jobs[@]}" <<'PY' 2>/dev/null
+import os, subprocess, sys, concurrent.futures as cf
+cdir = os.environ["CCC_DIR"]; model = os.environ.get("CCC_MODEL", "")
+PROMPT = """Write a retrieval card for the past AI-assistant chat below, so a search tool can tell what this chat is ABOUT.
 Plain text, at most 1200 characters:
 TITLE: <a specific one-line title>
 - main topic and goal
@@ -1391,12 +1395,19 @@ TITLE: <a specific one-line title>
 No preamble.
 
 === CHAT ===
-$body" </dev/null 2>/dev/null)
-      [[ -n $out ]] && { print -r -- "<!-- claudius-card v1 bytes=$cur -->"; print -r -- "$out"; } >| "$cf.tmp" && mv -f "$cf.tmp" "$cf"
-    ) &
-    (( ++j % 6 == 0 )) && wait
-  done
-  wait; _cc_spin_stop
+"""
+def build(job):
+    path, ex = job.split("\t", 1)
+    cid = os.path.splitext(os.path.basename(path))[0]; cf_ = os.path.join(cdir, cid + ".card.md")
+    size = os.path.getsize(path)
+    data = open(ex, errors="ignore").read(); body = data[:70000] + ("\n…\n" + data[-20000:] if len(data) > 90000 else data[70000:])
+    r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", model] if model else []), "--no-session-persistence", PROMPT + body],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode == 0 and r.stdout.strip():
+        tmp = cf_ + ".tmp"; open(tmp, "w").write(f"<!-- claudius-card v1 bytes={size} -->\n" + r.stdout.strip() + "\n"); os.replace(tmp, cf_)
+with cf.ThreadPoolExecutor(6) as ex: list(ex.map(build, sys.argv[1:]))
+PY
+  _cc_spin_stop
 }
 
 _cc_card_rank() {   # $1=question, rest = transcript paths -> prints up to 10 paths, most relevant first ('' on failure)
@@ -1419,7 +1430,7 @@ prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats.\n\n
           "Which chats most likely contain the answer? Judge by MEANING, not shared words. "
           "Return ONLY the 10 best card labels, best first, comma-separated (e.g. C12, C3, ...).")
 m = os.environ.get("CCR_MODEL", "")
-r = subprocess.run(["claude", "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
+r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL)
 seen = []
 for lab in re.findall(r"C(\d+)", r.stdout):
