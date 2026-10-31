@@ -1502,9 +1502,9 @@ for p in sys.argv[1:]:
     cid = os.path.splitext(os.path.basename(p))[0]
     for c in sorted(glob.glob(os.path.join(cdir, glob.escape(cid) + ".sec[0-9][0-9][0-9].md"))):
         t = open(c, errors="ignore").read().strip()[:700]
-        if t: items.append((p, t))
+        if t: items.append((p, t, int(c[-6:-3])))
 if not items: sys.exit(0)
-cat = "\n\n".join(f"[S{i+1}]\n{t}" for i, (_, t) in enumerate(items))
+cat = "\n\n".join(f"[S{i+1}]\n{t}" for i, (_, t, _n) in enumerate(items))
 prompt = (f"Below are {len(items)} cards, each describing one SECTION of a long past AI-assistant chat.\n\n" + cat +
           f"\n\nA developer asks:\nQUESTION: {os.environ['CCR_Q']}\nWhich sections most likely contain the answer? Judge by MEANING. "
           "Return ONLY the 10 best section labels, best first, comma-separated (e.g. S12, S3, ...).")
@@ -1514,9 +1514,23 @@ r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--mo
 seen = []
 for lab in re.findall(r"S(\d+)", r.stdout):
     i = int(lab) - 1
-    if 0 <= i < len(items) and items[i][0] not in seen: seen.append(items[i][0])
-print("\n".join(seen[:10]))
+    if 0 <= i < len(items) and items[i][0] not in [x[0] for x in seen]: seen.append((items[i][0], items[i][2]))
+print("\n".join(f"{p}\t{n}" for p, n in seen[:10]))   # path<TAB>section number
 PY
+}
+
+_cc_section_slice() {   # $1=id $2=jsonl $3=section number -> path of a jsonl holding ONLY that section's lines (cached)
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" out; out="$cdir/$1.s$(printf %03d $3).slice.jsonl"
+  [[ -s $out && ! $2 -nt $out ]] || python3 - "$cdir/$1.sections.json" "$2" "$3" "$out" <<'PY' 2>/dev/null
+import json, sys
+meta, src, n, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+s = next(x for x in json.load(open(meta))["sections"] if x["n"] == n)
+with open(src, errors="ignore") as f, open(out, "w") as o:
+    for i, line in enumerate(f):
+        if i > s["last"]: break
+        if i >= s["first"]: o.write(line)
+PY
+  [[ -s $out ]] && print -r -- "$out"
 }
 
 _cc_card_rank() {   # $1=question, rest = transcript paths -> prints up to 10 paths, most relevant first ('' on failure)
@@ -1739,7 +1753,11 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   if [[ -n $cardpid ]]; then
     _cc_spin_start "ranking by meaning"; wait $cardpid $secpid 2>/dev/null; _cc_spin_stop
     cardtop=(${(f)"$(<"$cardtmp")"}); rm -f "$cardtmp"
-    [[ -n $sectmp ]] && { sectop=(${(f)"$(<"$sectmp")"}); rm -f "$sectmp"; }
+    typeset -A secof; local sl=
+    if [[ -n $sectmp ]]; then
+      for sl in ${(f)"$(<"$sectmp")"}; do sectop+=("${sl%%$'\t'*}"); [[ -z ${secof[${sl%%$'\t'*}]-} ]] && secof[${sl%%$'\t'*}]=${sl##*$'\t'}; done
+      rm -f "$sectmp"
+    fi
   fi
   (( ${#scored} == 0 && ${#cardtop} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
   (( ${#scored} )) && scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
@@ -1765,7 +1783,13 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   _cc_spin_start "preparing ${#topfiles} chats"
   local j=
   for j in {1..${#topfiles}}; do
-    tf=$(_cc_transcript_text "$topids[j]" "$topfiles[j]" "$q ${(j: :)et}")   # query-aware build: keep result middles matching the question/synonyms
+    tf=; local sn=
+    # the chat chosen by its SECTION card: take evidence from that stretch only, not from the whole (giant) chat
+    if [[ ${CCASK_SECTION_EVIDENCE:-1} != 0 && -n ${sectop[1]-} && $topfiles[j] == ${sectop[1]} ]]; then
+      sn=${secof[$topfiles[j]]-}; local slice=; [[ -n $sn ]] && slice=$(_cc_section_slice "$topids[j]" "$topfiles[j]" "$sn")
+      [[ -n $slice ]] && tf=$(_cc_transcript_text "$topids[j].s$(printf %03d $sn)" "$slice" "$q ${(j: :)et}")
+    fi
+    [[ -z $tf ]] && tf=$(_cc_transcript_text "$topids[j]" "$topfiles[j]" "$q ${(j: :)et}")   # query-aware build: keep result middles matching the question/synonyms
     pairs+=("$labels[j]"$'\t'"$tf")
   done
   _cc_spin_stop
