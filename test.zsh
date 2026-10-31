@@ -203,6 +203,8 @@ out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No sessi
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
 okn "ccask -a no var-decl leak" "base=" "$out"   # guard the zsh 'bare local of a set var prints it' gotcha
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
+okc "ccask: excerpts tagged with turn position" "[turn " "$(ccask -x "preview" </dev/null 2>/dev/null)"
+okc "ccask: prompt says the later turn wins" "the LATER turn is the current answer" "$(ccask -a "preview" </dev/null 2>&1)"
 # meaning cards: a card ranker pick comes first, the #1 keyword match is still kept, cards are cached
 CDIR="$CLAUDE_CONFIG_DIR/claudius-cache"; mkdir -p "$CDIR"
 claude(){ if [[ "$*" == *"retrieval card"* ]]; then print -r -- "TITLE: card for a chat"; elif [[ "$*" == *"Which chats most likely"* ]]; then print -r -- "C1"; else print -r -- "CLAUDE $* @ $PWD"; fi; }

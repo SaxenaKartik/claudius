@@ -1222,6 +1222,11 @@ for pair in pairs:
         low = text.lower()
         distinct = sum(1 for t in terms if t in low)
         by_chat[path].append((distinct, sum(low.count(t) for t in terms), order, text))
+# where each turn sits in its chat ("turn 412 of 980"): excerpts are fragments, and a long chat often holds
+# BOTH an early decision and the later one that replaced it — the position lets the answer pick the later one
+pos = {}
+for k, blocks in by_chat.items():
+    for j, b in enumerate(blocks): pos[b[2]] = (j + 1, len(blocks))
 # the answer to "what happened / how did it end" often sits in the turns AFTER the matching one, which
 # don't repeat the question's words — so each matched turn carries its next FOLLOW turns with it. And
 # the #1 chat, when small, is sent WHOLE: cheap, and nothing in it can be dropped for lacking a keyword.
@@ -1264,7 +1269,7 @@ out = []
 for k in keys:
     items = sorted(grouped[k])
     if not items: continue
-    out.append(f"\n### From chat: {label_of[k]}\n"); out.extend(t for _, t in items)
+    out.append(f"\n### From chat: {label_of[k]}\n"); out.extend(f"[turn {pos[o][0]} of {pos[o][1]}]\n{t}" for o, t in items)
 print("\n\n".join(out))
 PY
 }
@@ -1914,7 +1919,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     print -r -- "$excerpts"; return 0
   fi
   local prompt out
-  prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Quote exact formulas, numbers, and file/CR/ticket identifiers when present. Include EVERY specific detail in the excerpts that bears on the question — commands, paths, URLs, ports, flags, branch names, numbers, and the reason and outcome — even if that makes the answer longer; do not summarise them away. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
+  prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Each excerpt is tagged [turn N of M] — where it sits in that chat. When excerpts about the same thing disagree (a decision, value, flag, branch or cause that changed), the LATER turn is the current answer: give it, and mention the earlier version only as what it replaced. Quote exact formulas, numbers, and file/CR/ticket identifiers when present. Include EVERY specific detail in the excerpts that bears on the question — commands, paths, URLs, ports, flags, branch names, numbers, and the reason and outcome — even if that makes the answer longer; do not summarise them away. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
   out=$(_cc_claude_spin "$prompt")
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line
@@ -2077,7 +2082,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     local excerpts; excerpts=$(_cc_ask_excerpts "$selq" 100000 "${pairs[@]}")
     if [[ -n "$excerpts" ]]; then
       ctxmat=$excerpts
-      prompt="Answer the question strictly and specifically from the conversation excerpts below — the most relevant turns, pre-selected for you (## USER / ## ASSISTANT). Quote exact formulas, numbers, code line references, and file/CR/ticket identifiers when present. If the excerpts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== RELEVANT EXCERPTS ==="$'\n'"$excerpts"
+      prompt="Answer the question strictly and specifically from the conversation excerpts below — the most relevant turns, pre-selected for you (## USER / ## ASSISTANT). Each excerpt is tagged [turn N of M] — where it sits in that chat. When excerpts about the same thing disagree (a decision, value, flag, branch or cause that changed), the LATER turn is the current answer: give it, and mention the earlier version only as what it replaced. Quote exact formulas, numbers, code line references, and file/CR/ticket identifiers when present. If the excerpts genuinely do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and state what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== RELEVANT EXCERPTS ==="$'\n'"$excerpts"
     else
       # fallback (no python, or no keyword hit): let claude read the extract file(s) itself
       prompt="Read the following conversation transcript extract file(s) (## USER / ## ASSISTANT turns), search them, and answer strictly from their content — quote exact formulas/numbers/ids. If not present, reply beginning 'CANNOT ANSWER:'. Never invent."$'\n\n'"QUESTION: $q"$'\n\n'"TRANSCRIPTS:"$'\n'

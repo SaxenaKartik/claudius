@@ -61,7 +61,7 @@ query is present:
   rebuilt each ask; the shared cache is untouched.
 - **`ccfetch`/`ccspec`/`ccexplain`/`ccexport` (no query):** there's nothing to be aware of, so only
   the salient-content regex applies — query-independent, and this is the shared **cached** extract
-  (`<id>.text.md`, marker `claudius-extract v4`; a bump forces rebuild).
+  (`<id>.text.md`, marker `claudius-extract v4`; a bump forces rebuild). Each excerpt is tagged `[turn N of M]` (its position in its chat) and the answer prompt says the LATER turn wins when excerpts disagree — long chats often hold an early decision and the one that replaced it. On the 14 benchmark misses this fixed 5 with 1 regression in 20 checks; a wider second read on CANNOT ANSWER was tried and dropped (fired 5×, fixed 0).
 
 Then **select turns**: split each extract
 into `## USER` / `## ASSISTANT` blocks; score each block by **# of distinct terms** (tiebreak: total
