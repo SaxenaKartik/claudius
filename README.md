@@ -102,7 +102,7 @@ Run **`claudius`** anytime to see this walkthrough in your terminal. The typical
 1. **`ccimport`** — name your existing sessions in one pass. It **suggests a name** for each (from the chat's first message) — Enter accepts, type to override, `-` skips. Use **`ccimport --all`** to walk through *every* un-named chat (Esc quits at any prompt); plain `ccimport` opens a multi-select picker (Space ticks).
 2. **`cclist`** — browse and resume: type to filter, ↑/↓ to move, Enter to resume.
 3. **`ccresume "My Project"`** — jump straight to a specific chat by name (case-insensitive, substring, tab-completes).
-4. **`ccask "<question>"`** — the payoff: ask anything and Claudius searches *all* your past chats by default, answers, and cites which ones. Scope to specific chats with `ccask -c "Chat A" -c "Chat B" "<q>"` (or trailing names). Inside a chat, `/ccask <question>` does the same and lands the context in your session.
+4. **`ccask "<question>"`** — the payoff: ask anything and Claudius searches *all* your past chats by default, answers, and cites which ones. Scope to specific chats with `ccask -c "Chat A" -c "Chat B" "<q>"` (or trailing names). Inside a chat, `/ccask <question>` does the same and lands the context in your session. The first ask writes a short cached card per chat (minutes for a big history) — run **`ccask --warm`** once after install to do that up front.
 5. **Inside a chat** — `/ccname` tells you what the current chat is mapped as (`/ccadd` names it); `/ccfetch <name>` pulls another mapped chat's context into the one you're in.
 6. **`ccbranch "My Project"`** — fetch a chat's *full* history and start a **new** session from it (the original is untouched).
 

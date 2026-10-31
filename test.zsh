@@ -220,6 +220,11 @@ rm -f "$CDIR"/*.card.md
 out=$(CCASK_CARDS=1 CCASK_DEBUG_RANK=1 ccask -a "zznomatchword" </dev/null 2>/dev/null); okc "cards: meaning pick ranks even with no keyword match" "1	" "$out"
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "cards: built and cached" 0 $?
 okc "cards: card records source size" "claudius-card v1 bytes=" "$(head -1 "$CDIR"/*.card.md(N[1]) 2>/dev/null)"
+rm -f "$CDIR"/*.card.md
+out=$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null); okc "warm: reports cards ready" "cards ready:" "$out"
+ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "warm: builds cards without a question" 0 $?
+okc "warm: second run builds nothing new" "(+0 new)" "$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null)"
+okc "warm: cards off is a no-op" "nothing to warm" "$(CCASK_CARDS=0 ccask --warm </dev/null 2>/dev/null)"
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }
 # NEW DEFAULT: no chat named -> cross-chat search (what -a used to require)
 out=$(ccask "preview" </dev/null 2>&1);          okc "ccask default (no name) = cross-chat" "MULTIPLE past coding chats" "$out"

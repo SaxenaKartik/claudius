@@ -139,6 +139,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
+    -w, --warm      write every chat/section card now (no question) so your first real ask is fast;
+                    run once after install. Without it, the first ccask writes them (same result, slower).
   After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
   chats — no re-search. Esc, q, or Enter on an empty line finishes.
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
@@ -1593,6 +1595,23 @@ PY
   fi
 }
 
+_cc_ask_warm() {   # ccask --warm: write every missing/stale chat + section card now, so the first real ask is fast
+  local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" ff=
+  [[ ${CCASK_CARDS:-1} == 0 ]] && { echo "cards are off (CCASK_CARDS=0) — nothing to warm."; return 0; }
+  local -a files=()
+  for ff in "$base"/projects/*/*.jsonl(N); do
+    _cc_is_ephemeral "$ff" && continue
+    [[ -n ${CCASK_EXCLUDE-} && " ${CCASK_EXCLUDE//,/ } " == *" ${${ff:t}[1,8]} "* ]] && continue
+    files+=("$ff")
+  done
+  (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
+  local -a c0=("$cdir"/*.card.md(N)) s0=("$cdir"/*.sec[0-9]*.md(N))
+  print -u2 -- $'\e[2mWarming cards for '"${#files}"$' chat(s) — one-time; later asks only refresh new or grown chats.\e[0m'
+  _cc_cards_ensure $files
+  [[ ${CCASK_SECTIONS:-1} != 0 ]] && _cc_sections_ensure $files
+  local -a c1=("$cdir"/*.card.md(N)) s1=("$cdir"/*.sec[0-9]*.md(N))
+  print -r -- "cards ready: ${#c1} chat card(s) (+$(( ${#c1} - ${#c0} )) new), ${#s1} section card(s) (+$(( ${#s1} - ${#s0} )) new)."
+}
 _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from the top few, cite them
   local q="$1" base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
   # query terms: lowercase, keep alphanumeric words >=3 chars that aren't stopwords
@@ -1912,6 +1931,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
                     if [[ -n ${2-} && ${2-} != -* ]]; then chats+=("$2"); shift 2   # -c "<name>"
                     else pick=1; shift; fi ;;                                        # bare -c -> open the picker
       -x|--context) context=1; shift ;;   # print the retrieved excerpts instead of answering (used by /ccask)
+      -w|--warm)    _cc_ask_warm; local rc=$?; _cc_done_line $_t0; return $rc ;;   # pre-build all cards now (no question)
       -f|--file)    qfile="${2-}"; shift 2 ;;   # read the question from a FILE (multi-line / tabbed input; avoids terminal paste mangling)
       *) break ;;
     esac
