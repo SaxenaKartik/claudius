@@ -228,6 +228,11 @@ out=$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null); okc "warm: reports car
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "warm: builds cards without a question" 0 $?
 okc "warm: second run builds nothing new" "(+0 new)" "$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null)"
 okc "warm: cards off is a no-op" "nothing to warm" "$(CCASK_CARDS=0 ccask --warm </dev/null 2>/dev/null)"
+# job-control notices only appear with a real terminal: run ccask under a pseudo-terminal (BSD or util-linux `script`)
+_ptycmd="source '$CLAUDE_CONFIG_DIR/claudius.zsh'; ccask -x preview; exit"
+if script -q /dev/null true </dev/null >/dev/null 2>&1; then out=$(CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" script -q /dev/null zsh -ic "$_ptycmd" </dev/null 2>&1)
+else out=$(CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" script -qc "zsh -ic \"$_ptycmd\"" /dev/null </dev/null 2>&1); fi
+okn "ccask: no job-control notices in a terminal" "_cc_card_rank" "$out"
 # install-time background build: starts once, finishes, never twice; opt-out honoured
 rm -f "$CDIR/.warm-started" "$CDIR/warm.log" "$CDIR"/*.card.md
 ( unset CLAUDIUS_NO_WARM; CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" _cc_warm_autostart now ); okrc "warm-autostart: starts a background build" 0 $?

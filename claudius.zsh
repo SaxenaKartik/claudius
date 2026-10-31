@@ -1745,10 +1745,10 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
     _cc_warm_running && print -u2 -- $'\e[2m(search cards are still being built in the background since install — this ask may be slower; progress: ~/.claude/claudius-cache/warm.log)\e[0m'
     _cc_cards_ensure $files
-    cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null & cardpid=$!; }
+    cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null; : >| "$cardtmp.done"; } &! cardpid=1; }
     if [[ ${CCASK_SECTIONS:-1} != 0 ]]; then
       _cc_sections_ensure $files
-      sectmp=$(mktemp "${TMPDIR:-/tmp}/cc_secrank.XXXXXX") && { _cc_section_rank "$q" $files >| "$sectmp" 2>/dev/null & secpid=$!; }
+      sectmp=$(mktemp "${TMPDIR:-/tmp}/cc_secrank.XXXXXX") && { { _cc_section_rank "$q" $files >| "$sectmp" 2>/dev/null; : >| "$sectmp.done"; } &! secpid=1; }
     fi
   fi
   # one-pass term counts: _cc_tcfiles[term] = files containing it, _cc_tccount[term<TAB>file] = matching lines
@@ -1858,12 +1858,16 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   local -a cardtop=()
   local -a sectop=()
   if [[ -n $cardpid ]]; then
-    _cc_spin_start "ranking by meaning"; wait $cardpid $secpid 2>/dev/null; _cc_spin_stop
-    cardtop=(${(f)"$(<"$cardtmp")"}); rm -f "$cardtmp"
+    # the picks run DISOWNED (&!) so an interactive shell prints no "[3] 69508" / "done" job notices;
+    # wait on their done-markers instead of the job table (capped, so a hung pick can't block the ask)
+    _cc_spin_start "ranking by meaning"
+    local _w=0; while (( _w++ < 1800 )) && [[ ! -e $cardtmp.done || ( -n $secpid && ! -e $sectmp.done ) ]]; do sleep 0.1; done
+    _cc_spin_stop
+    cardtop=(${(f)"$(<"$cardtmp")"}); rm -f "$cardtmp" "$cardtmp.done"
     typeset -A secof; local sl=
     if [[ -n $sectmp ]]; then
       for sl in ${(f)"$(<"$sectmp")"}; do sectop+=("${sl%%$'\t'*}"); [[ -z ${secof[${sl%%$'\t'*}]-} ]] && secof[${sl%%$'\t'*}]=${sl##*$'\t'}; done
-      rm -f "$sectmp"
+      rm -f "$sectmp" "$sectmp.done"
     fi
   fi
   (( ${#scored} == 0 && ${#cardtop} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
