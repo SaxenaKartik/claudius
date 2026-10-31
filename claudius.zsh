@@ -144,6 +144,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
+  $CCASK_ANSWER_MODEL picks the model that writes the answer (e.g. sonnet); default: your claude default.
     -w, --warm      write every chat/section card now (no question). Installing Claudius already runs
                     this once in the background (opt out: CLAUDIUS_NO_WARM=1); run it again any time.
   After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
@@ -1925,7 +1926,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   fi
   local prompt out
   prompt="You are answering from excerpts of MULTIPLE past coding chats; each block is headed '### From chat: <name>'. Answer the question strictly from these excerpts, and CITE the chat name(s) each part of your answer comes from, e.g. (from “Backend Changes”). Each excerpt is tagged [turn N of M] — where it sits in that chat. When excerpts about the same thing disagree (a decision, value, flag, branch or cause that changed), the LATER turn is the current answer: give it, and mention the earlier version only as what it replaced. Quote exact formulas, numbers, and file/CR/ticket identifiers when present. Include EVERY specific detail in the excerpts that bears on the question — commands, paths, URLs, ports, flags, branch names, numbers, and the reason and outcome — even if that makes the answer longer; do not summarise them away. If the excerpts do not contain the answer, reply with a single line beginning exactly 'CANNOT ANSWER:' and say what is missing. Never invent anything not in the excerpts."$'\n\n'"QUESTION: $q"$'\n\n'"=== EXCERPTS (from your most relevant chats) ==="$'\n'"$excerpts"
-  out=$(_cc_claude_spin "$prompt")
+  out=$(_cc_claude_spin "$prompt" thinking "${CCASK_ANSWER_MODEL:+--model $CCASK_ANSWER_MODEL}")   # $CCASK_ANSWER_MODEL: e.g. sonnet (default: your claude default)
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"; _CC_ANSWER_MD="$out"   # stash so ccask can offer copy AFTER the done line
   _cc_ask_save "$prompt" "$q" "$out"         # keep the fetched excerpts so follow-ups don't re-search
@@ -1947,7 +1948,7 @@ $(<"$d/qa.md")
 Now answer this NEW follow-up question using ONLY the same excerpts/material above, with the same rules (cite the chat names; quote exact identifiers; reply with a line beginning exactly 'CANNOT ANSWER:' if the material doesn't contain it; never invent). Use the earlier answers only to resolve references like 'that'/'it'.
 
 FOLLOW-UP QUESTION: $q"
-  out=$(_cc_claude_spin "$prompt")
+  out=$(_cc_claude_spin "$prompt" thinking "${CCASK_ANSWER_MODEL:+--model $CCASK_ANSWER_MODEL}")   # $CCASK_ANSWER_MODEL: e.g. sonnet (default: your claude default)
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"; _CC_ANSWER_MD="$out"
   print -r -- "Q: $q"$'\n'"A: $out"$'\n' >> "$d/qa.md"
@@ -2098,7 +2099,7 @@ ccask() {   # ask Claude a one-shot question about one or more saved chats (head
     [[ -z "$ctxmat" ]] && { echo "no excerpts retrieved."; return 1; }
     print -r -- "$ctxmat"; return 0
   fi
-  out=$(_cc_claude_spin "$prompt")
+  out=$(_cc_claude_spin "$prompt" thinking "${CCASK_ANSWER_MODEL:+--model $CCASK_ANSWER_MODEL}")   # $CCASK_ANSWER_MODEL: e.g. sonnet (default: your claude default)
   [[ -z "$out" ]] && { echo "no answer produced (cancelled, or the model returned nothing)."; return 1; }
   _cc_present "$out"
   _cc_ask_save "$prompt" "$q" "$out"
