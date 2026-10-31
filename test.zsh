@@ -209,6 +209,13 @@ claude(){ if [[ "$*" == *"retrieval card"* ]]; then print -r -- "TITLE: card for
 STUBC="$CLAUDE_CONFIG_DIR/claude-stub"; print -r -- '#!/bin/sh
 case "$*" in *"retrieval card"*) echo "TITLE: card for a chat";; *"Which chats most likely"*) echo "C1";; *) echo "CLAUDE $*";; esac' >| "$STUBC"; chmod +x "$STUBC"
 export CCASK_CLAUDE_BIN="$STUBC"   # python-side model calls use this stub too (they can't see the shell function)
+print -r -- '#!/bin/sh
+case "$*" in *"retrieval card"*) echo "TITLE: card for a chat";; *"SECTION ONLY"*) echo "SECTION: a stretch (2026-01-01 – 2026-01-01)";; *"Which sections most likely"*) echo "S1";; *"Which chats most likely"*) echo "C1";; *) echo "CLAUDE $*";; esac' >| "$STUBC"
+rm -f "$CDIR"/*.sec*.md "$CDIR"/*.sections.json
+out=$(CCASK_CARDS=1 CCASK_SECTIONS=1 CCASK_SECTION_MIN=1 CCASK_DEBUG_RANK=1 ccask -a "zznomatchword" </dev/null 2>/dev/null)
+ls "$CDIR"/*.sec001.md >/dev/null 2>&1; okrc "sections: section cards built for long chats" 0 $?
+ls "$CDIR"/*.sections.json >/dev/null 2>&1; okrc "sections: section index cached" 0 $?
+okc "sections: ranking still returns chats with sections on" "1	" "$out"
 rm -f "$CDIR"/*.card.md
 out=$(CCASK_CARDS=1 CCASK_DEBUG_RANK=1 ccask -a "zznomatchword" </dev/null 2>/dev/null); okc "cards: meaning pick ranks even with no keyword match" "1	" "$out"
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "cards: built and cached" 0 $?

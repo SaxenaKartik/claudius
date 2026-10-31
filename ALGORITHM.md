@@ -36,6 +36,13 @@ still wins). Cards only choose chats; the answer is still built from the chats' 
 turns it off (keyword ranking only). On the 93-question benchmark this moved the source chat into the top 5
 for 91/93 questions (keyword alone: 63–66).
 
+**4b · Section cards for long chats.** A chat whose compact transcript is too big for one card (> 90K chars)
+is split into topic stretches — where you came back after 3h+ or it was compacted, kept to ≤ ~120K chars — and
+each stretch gets its own short card (written by Haiku from the WHOLE stretch, cached; only new stretches get
+cards as a chat grows). A separate small-model pick over the section cards runs in parallel. Top 5 = 3 chat-card
+picks + the best section pick + the #1 keyword match. Finds topics that live only in the MIDDLE of a chat
+(mid-chat questions 19/21 -> 21/21 in the top 5). `CCASK_SECTIONS=0` turns it off.
+
 **4 · Rank every chat — local `grep`, milliseconds, no model.** See scoring below. Sort, keep the
 top `CCASK_TOPK` (default 5); chats matching nothing score 0 and are dropped.
 
@@ -151,6 +158,7 @@ is unreadable, recency = 0.
 | `CCASK_SHORT_OPENER` | 8 | an opener with fewer words than this borrows the assistant's first substantial reply |
 | `CCASK_CARDS` | 1 | meaning ranking via cached chat cards (0 = keyword only) |
 | `CCASK_CARD_MODEL` / `CCASK_CARD_RANK_MODEL` | sonnet / haiku | model that writes cards / picks chats from them |
+| `CCASK_SECTIONS` / `CCASK_SECTION_MIN` / `CCASK_SECTION_MAX` | 1 / 90000 / 120000 | section cards on; chats above MIN chars of transcript get them; stretch size cap |
 | `CCASK_EXCLUDE` | — | space/comma-separated 8-char session-id prefixes to leave out of the corpus (e.g. a chat that holds an eval's answer key) |
 | `CCASK_FOLLOW` | 1 | turns after each matched turn carried into the excerpts |
 | `CCASK_WHOLE_MAX` | 15000 | #1 chat sent whole when its extract is at most this many chars |

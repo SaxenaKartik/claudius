@@ -1410,6 +1410,115 @@ PY
   _cc_spin_stop
 }
 
+# --- section cards: long and medium chats get one card per topic stretch, so a topic that only lives in the
+# MIDDLE of a chat (which its chat card can't see) can still be found. A chat is split where you came back after
+# 3h+ or it was compacted; stretches are kept between ~30K and ~200K characters of conversation.
+_cc_sections_ensure() {   # args: transcript paths -> build/refresh section cards for chats too big for one card
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache"; command -v python3 >/dev/null 2>&1 || return 0
+  local -a cand=(); local f ex
+  for f in "$@"; do
+    ex="$cdir/${${f:t}:r}.text.md"; [[ -s $ex ]] || continue
+    local -a st=(); zstat -A st +size "$ex" 2>/dev/null; (( ${st[1]:-0} > ${CCASK_SECTION_MIN:-90000} )) && cand+=("$f")
+  done
+  (( ${#cand} )) || return 0
+  _cc_spin_start "checking section cards for ${#cand} long chat(s)"
+  CCS_DIR="$cdir" CCS_MODEL="${CCASK_SECTION_CARD_MODEL-haiku}" python3 - "${cand[@]}" <<'PY' 2>/dev/null
+import json, os, re, sys, datetime, subprocess, concurrent.futures as cf
+cdir = os.environ["CCS_DIR"]; model = os.environ.get("CCS_MODEL", ""); BIN = os.environ.get("CCASK_CLAUDE_BIN", "claude")
+GAP, MINC, MAXC = 3 * 3600, 30000, int(os.environ.get("CCASK_SECTION_MAX", "120000"))   # a card reads its WHOLE section
+def text(c):
+    if isinstance(c, str): return c
+    return " ".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
+def sections(path):
+    turns = []
+    for i, line in enumerate(open(path, errors="ignore")):
+        try: o = json.loads(line)
+        except Exception: continue
+        if o.get("type") not in ("user", "assistant"): continue
+        t = re.sub(r"<system-reminder>.*?</system-reminder>", "", text(o.get("message", {}).get("content")), flags=re.S).strip()
+        if not t or (o["type"] == "user" and t.startswith("<")): continue
+        ts = o.get("timestamp"); d = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
+        turns.append((i, d, o["type"], t))
+    secs, cur, size, prev = [], [], 0, None
+    for x in turns:
+        i, d, r, t = x
+        brk = r == "user" and ((prev and d and (d - prev).total_seconds() > GAP) or "being continued from a previous conversation" in t)
+        if cur and ((brk and size >= MINC) or size >= MAXC): secs.append(cur); cur, size = [], 0
+        cur.append(x); size += len(t)
+        if r == "user": prev = d or prev
+    if cur:
+        if secs and size < MINC: secs[-1] += cur
+        else: secs.append(cur)
+    return secs
+PROMPT = """This is section {n} of {of} of a long AI-assistant chat, covering {a} to {b}.
+Write a retrieval card for THIS SECTION ONLY, so a search tool can find it later. Plain text, at most 600 characters:
+SECTION: <specific one-line title of what this stretch was about> ({a} – {b})
+- what was asked or worked on (use real names of systems, services, pages, tools, CRs/tickets)
+- decisions, fixes, merges or outcomes in this stretch (with dates if stated)
+No preamble.
+
+=== SECTION ===
+"""
+jobs = []
+for path in sys.argv[1:]:
+    cid = os.path.splitext(os.path.basename(path))[0]; meta = os.path.join(cdir, cid + ".sections.json")
+    size = os.path.getsize(path)
+    try: old = json.load(open(meta))
+    except Exception: old = {"bytes": 0, "sections": []}
+    if old.get("max") != MAXC: old = {"bytes": 0, "sections": []}          # section size changed -> rebuild
+    if old["sections"] and size - old["bytes"] <= max(old["bytes"] // 5, 51200): continue   # not grown enough
+    secs = sections(path); keep = {(s["first"], s["last"]) for s in old["sections"]}; out = []
+    for n, sec in enumerate(secs, 1):
+        ds = [x[1] for x in sec if x[1]]; a = ds[0].strftime("%Y-%m-%d") if ds else "?"; b = ds[-1].strftime("%Y-%m-%d") if ds else "?"
+        rec = {"n": n, "first": sec[0][0], "last": sec[-1][0], "from": a, "to": b}; out.append(rec)
+        card = os.path.join(cdir, f"{cid}.sec{n:03d}.md")
+        if (rec["first"], rec["last"]) in keep and os.path.exists(card): continue   # unchanged stretch: reuse its card
+        body, tot = [], 0
+        for _, _, r, t in sec:
+            piece = ("YOU: " + t) if r == "user" else ("ASSISTANT: " + t)
+            if tot + len(piece) > MAXC + 20000: break                                  # whole section (no blind middle)
+            body.append(piece); tot += len(piece)
+        jobs.append((card, PROMPT.format(n=n, of=len(secs), a=a, b=b) + "\n".join(body)))
+    for stale in [f for f in os.listdir(cdir) if f.startswith(cid + ".sec") and f.endswith(".md")]:
+        if int(stale[len(cid) + 4:-3] or 0) > len(secs): os.remove(os.path.join(cdir, stale))
+    json.dump({"bytes": size, "max": MAXC, "sections": out}, open(meta, "w"))
+def build(job):
+    card, prompt = job
+    r = subprocess.run([BIN, "-p", *(["--model", model] if model else []), "--no-session-persistence", prompt],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode == 0 and r.stdout.strip(): open(card + ".tmp", "w").write(r.stdout.strip() + "\n"); os.replace(card + ".tmp", card)
+with cf.ThreadPoolExecutor(6) as ex: list(ex.map(build, jobs))
+PY
+  _cc_spin_stop
+}
+
+_cc_section_rank() {   # $1=question, rest = transcript paths -> up to 10 chat paths whose SECTION cards best match
+  local q="$1"; shift; command -v python3 >/dev/null 2>&1 || return 0
+  CCR_Q="$q" CCR_CDIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" CCR_MODEL="${CCASK_CARD_RANK_MODEL-haiku}" \
+    python3 - "$@" <<'PY' 2>/dev/null
+import glob, os, re, subprocess, sys
+cdir = os.environ["CCR_CDIR"]; items = []
+for p in sys.argv[1:]:
+    cid = os.path.splitext(os.path.basename(p))[0]
+    for c in sorted(glob.glob(os.path.join(cdir, glob.escape(cid) + ".sec[0-9][0-9][0-9].md"))):
+        t = open(c, errors="ignore").read().strip()[:700]
+        if t: items.append((p, t))
+if not items: sys.exit(0)
+cat = "\n\n".join(f"[S{i+1}]\n{t}" for i, (_, t) in enumerate(items))
+prompt = (f"Below are {len(items)} cards, each describing one SECTION of a long past AI-assistant chat.\n\n" + cat +
+          f"\n\nA developer asks:\nQUESTION: {os.environ['CCR_Q']}\nWhich sections most likely contain the answer? Judge by MEANING. "
+          "Return ONLY the 10 best section labels, best first, comma-separated (e.g. S12, S3, ...).")
+m = os.environ.get("CCR_MODEL", "")
+r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
+                   capture_output=True, text=True, stdin=subprocess.DEVNULL)
+seen = []
+for lab in re.findall(r"S(\d+)", r.stdout):
+    i = int(lab) - 1
+    if 0 <= i < len(items) and items[i][0] not in seen: seen.append(items[i][0])
+print("\n".join(seen[:10]))
+PY
+}
+
 _cc_card_rank() {   # $1=question, rest = transcript paths -> prints up to 10 paths, most relevant first ('' on failure)
   local q="$1"; shift
   command -v python3 >/dev/null 2>&1 || return 0
@@ -1512,10 +1621,14 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   (( ${#files} == 0 )) && { echo "no sessions found on disk."; return 1; }
   local N=${#files}
   # meaning ranking runs IN PARALLEL with the keyword pass below (they don't depend on each other)
-  local cardtmp= cardpid=
+  local cardtmp= cardpid= sectmp= secpid=
   if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
     _cc_cards_ensure $files
     cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null & cardpid=$!; }
+    if [[ ${CCASK_SECTIONS:-1} != 0 ]]; then
+      _cc_sections_ensure $files
+      sectmp=$(mktemp "${TMPDIR:-/tmp}/cc_secrank.XXXXXX") && { _cc_section_rank "$q" $files >| "$sectmp" 2>/dev/null & secpid=$!; }
+    fi
   fi
   # one-pass term counts: _cc_tcfiles[term] = files containing it, _cc_tccount[term<TAB>file] = matching lines
   typeset -A _cc_tcfiles _cc_tccount _cc_tcdone
@@ -1622,16 +1735,20 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # meaning ranking (default on): cards pick the chats that are ABOUT the question; the #1 keyword match is
   # always kept too, so an exact detail (a flag, a file, "CSV vs PDF") still wins when you name it.
   local -a cardtop=()
+  local -a sectop=()
   if [[ -n $cardpid ]]; then
-    _cc_spin_start "ranking by meaning"; wait $cardpid 2>/dev/null; _cc_spin_stop
+    _cc_spin_start "ranking by meaning"; wait $cardpid $secpid 2>/dev/null; _cc_spin_stop
     cardtop=(${(f)"$(<"$cardtmp")"}); rm -f "$cardtmp"
+    [[ -n $sectmp ]] && { sectop=(${(f)"$(<"$sectmp")"}); rm -f "$sectmp"; }
   fi
   (( ${#scored} == 0 && ${#cardtop} == 0 )) && { echo "CANNOT ANSWER: none of your saved chats mention $(print -r -- "${(j:, :)qt}")."; return 1; }
   (( ${#scored} )) && scored=("${(@f)$(printf '%s\n' "${scored[@]}" | LC_ALL=C sort -t $'\t' -k1,1nr)}")
   local K=${CCASK_TOPK:-5}
   local -a kwfiles=(${scored[@]#*$'\t'}) pick=(); local x=
   if (( ${#cardtop} )); then
-    for x in ${cardtop[1,K-1]} ${kwfiles[1]} ${cardtop[K,-1]} $kwfiles; do
+    # slots: 3 chat-card picks + the best SECTION pick (mid-chat topics) + the #1 keyword match, then fill
+    local nc=$(( ${#sectop} ? K - 2 : K - 1 ))
+    for x in ${cardtop[1,nc]} ${sectop[1]} ${kwfiles[1]} ${cardtop[nc+1,-1]} ${sectop[2,-1]} $kwfiles; do
       [[ -n $x ]] && (( ! ${pick[(Ie)$x]} )) && pick+=("$x"); (( ${#pick} >= K )) && break
     done
   else
