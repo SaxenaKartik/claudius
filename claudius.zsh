@@ -94,6 +94,7 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     cclist)    print -r -- 'cclist — interactive picker to resume a chat by name.
   Usage: cclist [-l|--list]
   Keys: type to filter, up/down to move, Enter resumes, Esc clears then quits.
+  Each chat shows its card title (what it was about); typing filters on the name OR the title.
   Flags:
     -l, --list   print a plain list instead of the picker (also used when not a TTY).';;
     ccresume)  print -r -- 'ccresume — resume a mapped chat by name.
@@ -107,7 +108,9 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   With no argument, opens the picker.';;
     ccfind)    print -r -- 'ccfind — search the map by text.
   Usage: ccfind "<text>"
-  Case-insensitive substring match over conversation NAMES and NOTES.';;
+  Case-insensitive substring match over conversation NAMES and NOTES, then a "By topic" list from the
+  chat cards (local, no model call): chats named or not whose card — or one section of a long chat (§) —
+  is about your words. $CCFIND_MAX sets how many (default 5); cards come from ccask (or ccask --warm).';;
     ccmonitor) print -r -- 'ccmonitor — status table of all mapped chats.
   Usage: ccmonitor
   Columns: name, output tokens (summed from the transcript), age, and state
@@ -122,6 +125,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     ccfetch --file <path.md>     summarise an arbitrary file instead (shorthand: @path.md)
   Flags:
     -r, --refresh                regenerate the cached summary (one chat, or all in multi mode)
+    --about "<topic>"            long chats: summarise ONLY the stretch whose section card matches the
+                                 topic (the ccexplain Timeline lists the stretches; not cached)
     [extra]                      extra instructions appended to the prompt (single mode; not cached)
   Cache: <config>/claudius-cache/<id>.fetch.md — manage it with cccache.';;
     ccask)     print -r -- 'ccask — ask Claude a one-shot question about your saved chats (headless; no new conversation).
@@ -168,7 +173,9 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -r, --refresh   regenerate the cached spec.   With no name, opens the picker.';;
     ccexplain) print -r -- 'ccexplain — plain-terms Done / Pending / Next for a chat.
   Usage: ccexplain "<name>" [extra]
-  Prints a short status to stdout (not cached). With no name, opens the picker.';;
+  Prints a short status to stdout (not cached). With no name, opens the picker.
+  Long chats: the section cards (one per dated topic stretch) are given to the model so the explanation
+  covers the WHOLE chat, and are printed after it as a Timeline.';;
     ccexport)  print -r -- 'ccexport — write a Markdown context export for handoff.
   Usage: ccexport "<name>" [output.md]
   Default path ./<slug>.context.md. Sections: Overview, What happened, Decisions,
@@ -320,20 +327,26 @@ _cc_rows() {
     }' "$_CC_MAP" 2>/dev/null
 }
 
-_cc_plain() { _cc_rows | awk -F'\t' '{printf "  \033[36m%s\033[0m  \033[2m%s\033[0m\n",$1,$2}'; }
+_cc_plain() {   # name + id, then the chat card title (when one exists) on a dim line
+  local -A _ttl; local id t name; while IFS=$'\t' read -r id t; do _ttl[$id]=$t; done < <(_cc_card_titles)
+  while IFS=$'\t' read -r name id; do
+    printf '  \e[36m%s\e[0m  \e[2m%s\e[0m\n' "$name" "$id"; [[ -n ${_ttl[$id]-} ]] && printf '    \e[2m%s\e[0m\n' "${_ttl[$id]}"
+  done < <(_cc_rows)
+}
 
 _cc_pick() {
-  local -a names ids
-  local name id
-  while IFS=$'\t' read -r name id; do names+=("$name"); ids+=("$id"); done < <(_cc_rows)
+  local -a names ids titles
+  local name id; local -A _ttl; while IFS=$'\t' read -r id name; do _ttl[$id]=$name; done < <(_cc_card_titles)
+  while IFS=$'\t' read -r name id; do names+=("$name"); ids+=("$id"); titles+=("${_ttl[$id]-}"); done < <(_cc_rows)
   (( ${#names} == 0 )) && { print -u2 "No conversations in the map ($_CC_MAP)."; return 1; }
+  local tw=$(( ${COLUMNS:-100} - 8 ))
   local filter="" key seq sel=1 drawn=0 cancelled=
   local -a fidx
   local _recompute _draw
   _recompute() {   # rebuild filtered index list; clamp selection
     fidx=(); local i lf="${filter:l}"
     for (( i=1; i<=${#names}; i++ )); do
-      [[ -z $lf || "${names[i]:l}" == *"$lf"* ]] && fidx+=($i)
+      [[ -z $lf || "${names[i]:l}" == *"$lf"* || "${titles[i]:l}" == *"$lf"* ]] && fidx+=($i)   # name OR card title
     done
     (( sel < 1 )) && sel=1
     if (( ${#fidx} == 0 )); then sel=0; elif (( sel > ${#fidx} )); then sel=${#fidx}; fi
@@ -347,8 +360,10 @@ _cc_pick() {
     else
       for (( j=1; j<=${#fidx}; j++ )); do
         real=${fidx[j]}
-        if (( j == sel )); then printf '  \e[1;32m▶ %s\e[0m\n' "${names[real]}" >&2
-        else printf '    \e[36m%s\e[0m\n' "${names[real]}" >&2; fi
+        local tt=${titles[real]-} room=$(( tw - ${#names[real]} ))
+        if [[ -z $tt ]] || (( room < 8 )); then tt=; else tt=" — $tt"; (( ${#tt} > room )) && tt="${tt[1,room-1]}…"; fi
+        if (( j == sel )); then printf '  \e[1;32m▶ %s\e[0m\e[2m%s\e[0m\n' "${names[real]}" "$tt" >&2
+        else printf '    \e[36m%s\e[0m\e[2m%s\e[0m\n' "${names[real]}" "$tt" >&2; fi
         (( shown++ ))
       done
     fi
@@ -896,8 +911,22 @@ ccfind() {
       sub(/\|[[:space:]]*$/,"",notes); gsub(/^[[:space:]]+|[[:space:]]+$/,"",notes);
       printf "  \033[36m%s\033[0m  \033[2m%s\033[0m\n    %s\n", name, id, notes;
     }' "$_CC_MAP")
-  [[ -z $hits ]] && { echo "No entry matching '$q'."; return 1; }
-  print -r -- "$hits"
+  # topic match over chat + section cards (local, no model call): finds chats by WHAT they were about,
+  # named or not, including topics that only appear in the middle of a long chat (section cards)
+  local topic=; [[ ${CCASK_CARDS:-1} != 0 ]] && topic=$(_cc_card_search "$q" "${CCFIND_MAX:-5}")
+  [[ -z $hits && -z $topic ]] && { echo "No entry matching '$q'."; return 1; }
+  [[ -n $hits ]] && print -r -- "$hits"
+  if [[ -n $topic ]]; then
+    local base="${CLAUDE_CONFIG_DIR:-$HOME/.claude}" sc cid sec ttl lbl; local -A _nm; local n i
+    while IFS=$'\t' read -r n i; do _nm[$i]=$n; done < <(_cc_rows)
+    print -r -- $'\e[1mBy topic\e[0m \e[2m(from chat cards — named or not)\e[0m'
+    while IFS=$'\t' read -r sc cid sec ttl; do
+      if [[ -n ${_nm[$cid]-} ]]; then lbl=${_nm[$cid]}
+      else local -a jf=("$base"/projects/*/"$cid.jsonl"(N)); lbl="unnamed · $(_cc_label_for "$cid" "${jf[1]-}" 2>/dev/null)"; fi
+      printf '  \e[36m%s\e[0m  \e[2m%s\e[0m\n    %s%s\n' "$lbl" "$cid" "$( (( sec )) && print -rn -- '§ ')" "$ttl"
+    done <<< "$topic"
+  fi
+  return 0
 }
 
 ccmonitor() {
@@ -1535,6 +1564,59 @@ PY
   [[ -s $out ]] && print -r -- "$out"
 }
 
+_cc_card_titles() {   # -> "id<TAB>title" for every chat card (local, no model call)
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache"; local -a cs=("$cdir"/*.card.md(N))
+  (( ${#cs} )) || return 0
+  awk 'FNR==1 { done=0 } !done && FNR>1 && NF { t=$0; sub(/^TITLE:[ \t]*/,"",t); gsub(/^[#*[:space:]-]+/,"",t); f=FILENAME; sub(/.*\//,"",f); sub(/\.card\.md$/,"",f); print f "\t" substr(t,1,160); done=1 }' $cs 2>/dev/null
+}
+_cc_section_titles() {   # $1=id -> "N<TAB>section title (dates)" for each section card of that chat, in order
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" c n; local -a cs=("$cdir/$1".sec[0-9][0-9][0-9].md(N))
+  for c in $cs; do n=${${c%.md}##*.sec}; print -r -- "$((10#$n))	$(sed -n '1s/^SECTION:[[:space:]]*//p' "$c")"; done
+}
+_cc_card_search() {   # $1=query, $2=max -> local topic search over chat + section cards: "score<TAB>id<TAB>sec<TAB>title" (sec 0 = chat card)
+  command -v python3 >/dev/null 2>&1 || return 0
+  CCF_Q="$1" CCF_MAX="${2:-5}" CCF_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" python3 - <<'PY' 2>/dev/null
+import glob, math, os, re
+d = os.environ["CCF_DIR"]; stop = set("the a an of and or is are was were be to in on at by for from as it its this that with what which when where why who how do does did can we i you my our".split())
+words = lambda t: set(w.rstrip("s") for w in re.findall(r"[a-z0-9]+", t.lower()) if len(w) > 1 and w not in stop)
+q = words(os.environ["CCF_Q"])
+docs = []
+for c in glob.glob(os.path.join(d, "*.card.md")):
+    t = open(c, errors="ignore").read(); m = re.search(r"^TITLE:\s*(.*)$", t, re.M)
+    first = next((l.strip("#*- ").strip() for l in t.splitlines()[1:] if l.strip()), "")   # cards without a TITLE line
+    docs.append((os.path.basename(c)[:-8], 0, (m.group(1).strip() if m else first)[:160], words(t)))
+for c in glob.glob(os.path.join(d, "*.sec[0-9][0-9][0-9].md")):
+    t = open(c, errors="ignore").read(); b = os.path.basename(c)
+    docs.append((b.split(".sec")[0], int(b[-6:-3]), re.sub(r"^SECTION:\s*", "", t.splitlines()[0] if t else ""), words(t)))
+if not q or not docs: raise SystemExit
+N = len(docs); df = {w: sum(w in x[3] for x in docs) for w in q}
+hits = []
+for cid, sec, title, ws in docs:
+    sc = sum(math.log(1 + N / df[w]) for w in q if df[w] and w in ws)
+    if sc > 0: hits.append((sc * (1 + 0.5 * sum(w in words(title) for w in q)), cid, sec, title))
+best = {}
+for h in sorted(hits, reverse=True):          # one line per chat: its best-matching card (chat card or a section)
+    best.setdefault(h[1], h)
+for sc, cid, sec, title in sorted(best.values(), reverse=True)[: int(os.environ["CCF_MAX"])]:
+    print(f"{sc:.2f}\t{cid}\t{sec}\t{title}")
+PY
+}
+
+_cc_section_pick() {   # $1=id $2=topic -> "N<TAB>title" of the section card that best matches (local word overlap)
+  command -v python3 >/dev/null 2>&1 || return 0
+  CCP_Q="$2" python3 - "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/$1".sec[0-9][0-9][0-9].md(N) <<'PY' 2>/dev/null
+import math, os, re, sys
+w = lambda t: set(x.rstrip("s") for x in re.findall(r"[a-z0-9]+", t.lower()) if len(x) > 2)
+q = w(os.environ["CCP_Q"]); cs = [(int(p[-6:-3]), open(p, errors="ignore").read()) for p in sys.argv[1:]]
+if not q or not cs: raise SystemExit
+df = {x: sum(x in w(t) for _, t in cs) for x in q}
+head = lambda t: w(t.splitlines()[0] if t else "")      # the section's title line counts extra
+sc = [(sum(math.log(1 + len(cs) / df[x]) for x in q if df[x] and x in w(t)) * (1 + 0.5 * len(q & head(t))), -n, t) for n, t in cs]
+s, n, t = max(sc); n = -n                                # ties -> the earlier section
+if s > 0: print(f"{n}\t" + re.sub(r"^SECTION:\s*", "", t.splitlines()[0]))
+PY
+}
+
 _cc_card_rank() {   # $1=question, rest = transcript paths -> prints up to 10 paths, most relevant first ('' on failure)
   local q="$1"; shift
   command -v python3 >/dev/null 2>&1 || return 0
@@ -2024,8 +2106,11 @@ ccfetch() {
   #   ccfetch --file path.md [extra]     summarise an ARBITRARY file (never cached)
   #   ccfetch @path.md [extra]           shorthand for --file
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
-  local refresh= q src extra="" picked=
+  local refresh= q src extra="" picked= about=
   [[ "${1-}" == "-r" || "${1-}" == "--refresh" ]] && { refresh=1; shift; }
+  local -a _rest=(); while (( $# )); do                           # --about "<topic>" may sit anywhere after the name
+    if [[ $1 == --about || $1 == -t ]]; then about="${2-}"; shift 2 2>/dev/null || shift; else _rest+=("$1"); shift; fi
+  done; set -- "${_rest[@]}"
   q="${1-}"
   # --file / @ : arbitrary file, no cache
   if [[ "$q" == "--file" || "$q" == "-f" || "$q" == @* ]]; then
@@ -2058,6 +2143,16 @@ ccfetch() {
   local -a tf; tf=( "$base"/projects/*/"$match_id.jsonl"(N) )
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   local cdir="$base/claudius-cache"; local cfile="$cdir/$match_id.fetch.md"
+  if [[ -n $about ]]; then   # one stretch only: pick the section whose card best matches the topic (local), summarise its slice
+    local pick sec stitle sl
+    pick=$(_cc_section_pick "$match_id" "$about")
+    [[ -z $pick ]] && { echo "No section of '$match_name' matches '$about' (it may be too short to have sections — ccexplain shows its timeline)."; return 1; }
+    sec=${pick%%$'\t'*}; stitle=${pick#*$'\t'}
+    sl=$(_cc_section_slice "$match_id" "${tf[1]}" "$sec") || { echo "could not read section $sec."; return 1; }
+    print -u2 -- $'\e[2mSection '"$sec"$': '"$stitle"$'\e[0m'
+    _cc_claude_spin "Produce a concise handoff summary of this STRETCH of a longer conversation (about: $about): goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}"$'\n\n'"$(_cc_slice "${${sl:t}%.jsonl}" "$sl")"
+    return
+  fi
   # serve from cache (only the default, no-extra summary is cached)
   if [[ -z $refresh && -z $extra && -s "$cfile" ]]; then
     print -u2 -- $'\e[2m(cached — ccfetch -r "'"$match_name"$'" to refresh)\e[0m'
@@ -2172,7 +2267,15 @@ ccexplain() {
   (( ${#tf} == 0 )) && { echo "No transcript on disk for '$match_name' ($match_id)."; return 1; }
   command -v claude >/dev/null 2>&1 || { echo "claude not found on PATH."; return 1; }
   print -u2 "Explaining '$match_name' ($match_id)…"
-  _cc_claude_spin "From the conversation transcript below, explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}"$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")"
+  # long chats: the transcript slice below is size-capped, so add the section cards (one per topic stretch,
+  # dated) to cover the WHOLE chat — then show that timeline after the explanation
+  local tl; tl=$(_cc_section_titles "$match_id")
+  local cards=; [[ -n $tl ]] && cards=$'\n\n'"=== TIMELINE (section cards covering the whole chat, in order) ==="$'\n'"$(cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/$match_id".sec[0-9][0-9][0-9].md(N) 2>/dev/null)"
+  _cc_claude_spin "From the conversation transcript below, explain it in simple, plain terms for someone new to it. Use exactly three sections: '## Done' (what was accomplished), '## Pending' (what's unfinished / in progress), '## Next' (what should be done next). Keep it concrete and jargon-light. ${extra}${cards}"$'\n\n'"$(_cc_slice "$match_id" "${tf[1]}")"
+  if [[ -n $tl ]]; then
+    print -r -- ""; print -r -- $'\e[1mTimeline\e[0m \e[2m(section cards · ccfetch "'"$match_name"$'" --about "<topic>" fetches one stretch)\e[0m'
+    local sn st; while IFS=$'\t' read -r sn st; do printf '  \e[2m%2d.\e[0m %s\n' "$sn" "$st"; done <<< "$tl"
+  fi
 }
 
 ccexport() {
@@ -2322,10 +2425,14 @@ ccimport() {
     setopt local_options no_monitor
     print -u2 -- $'\e[2mSuggesting names for '"${#picks}"$' chat(s)…\e[0m'
     local tmpd; tmpd=$(mktemp -d 2>/dev/null || echo "/tmp/ccimport.$$"); mkdir -p "$tmpd"
-    local idx msg
+    local idx msg cardf what
     for idx in $picks; do
       msg=${labels[idx]##*· }   # the first-message part of the preview label
-      ( claude -p --no-session-persistence "Suggest a concise 2–5 word Title Case name for a saved coding chat that begins with the message below. Output ONLY the name — no quotes, punctuation, or explanation."$'\n\n'"Message: ${msg}" > "$tmpd/$idx" 2>/dev/null ) &
+      # a chat card describes the WHOLE chat; the first message is often just a link or "go through this doc"
+      cardf="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/${ids[idx]}.card.md"
+      if [[ -s $cardf ]]; then what="is described by the card below"; msg=$(sed -n '2,14p' "$cardf" | cut -c1-300)
+      else what="begins with the message below"; fi
+      ( claude -p --no-session-persistence "Suggest a concise 2–5 word Title Case name for a saved coding chat that ${what}. Output ONLY the name — no quotes, punctuation, or explanation."$'\n\n'"Chat: ${msg}" > "$tmpd/$idx" 2>/dev/null ) &
     done
     wait
     for idx in $picks; do

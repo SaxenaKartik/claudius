@@ -225,6 +225,21 @@ out=$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null); okc "warm: reports car
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "warm: builds cards without a question" 0 $?
 okc "warm: second run builds nothing new" "(+0 new)" "$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null)"
 okc "warm: cards off is a no-op" "nothing to warm" "$(CCASK_CARDS=0 ccask --warm </dev/null 2>/dev/null)"
+# cards in other commands: titles in lists, topic search in ccfind, timeline/section fetch
+print -r -- '<!-- claudius-card v1 bytes=1 -->
+TITLE: Kubernetes ingress migration for the billing API' >| "$CDIR/$idA.card.md"
+print -r -- 'SECTION: zebra rollout canary failures (2026-01-01 – 2026-01-02)
+- canary failed on zebra hosts' >| "$CDIR/$idA.sec001.md"
+print -r -- 'SECTION: quokka budget review (2026-01-03 – 2026-01-03)' >| "$CDIR/$idA.sec002.md"
+okc "cards: cclist -l shows the card title" "Kubernetes ingress migration" "$(cclist -l </dev/null)"
+out=$(CCASK_CARDS=1 ccfind "ingress billing"); okc "cards: ccfind finds by topic" "By topic" "$out"; okc "cards: ccfind topic names the chat" "Alpha" "$out"
+okc "cards: ccfind topic hits a section" "§ zebra rollout" "$(CCASK_CARDS=1 ccfind "zebra canary")"
+CCASK_CARDS=1 ccfind "ingress billing" >/dev/null 2>&1; okrc "cards: ccfind topic-only exit 0" 0 $?
+okc "cards: section pick by topic" "2	quokka budget review" "$(_cc_section_pick $idA "quokka budget")"
+okc "cards: ccexplain prints the timeline" "Timeline" "$(ccexplain "Alpha" </dev/null 2>/dev/null)"
+okc "cards: ccexplain gives the model the section cards" "TIMELINE (section cards" "$(ccexplain "Alpha" </dev/null 2>/dev/null)"
+out=$(ccfetch "Alpha" --about "zzqqnomatch" </dev/null 2>&1); okc "cards: ccfetch --about no match" "No section of 'Alpha' matches" "$out"
+rm -f "$CDIR/$idA".card.md "$CDIR/$idA".sec00[12].md
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }
 # NEW DEFAULT: no chat named -> cross-chat search (what -a used to require)
 out=$(ccask "preview" </dev/null 2>&1);          okc "ccask default (no name) = cross-chat" "MULTIPLE past coding chats" "$out"

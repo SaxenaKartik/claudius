@@ -116,7 +116,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 
 | Command | What it does |
 |---|---|
-| `cclist` | Picker: type to filter · ↑/↓ · Enter resumes · Esc clears/quits (`cclist -l` = plain list) |
+| `cclist` | Picker: type to filter · ↑/↓ · Enter resumes · Esc clears/quits (`cclist -l` = plain list). Each chat shows its card title, and the filter matches it |
 | `ccresume "<name>"` | Resume by name (exact → case-insensitive → substring) |
 | `ccbranch "<name>"` | Fork a chat's full history into a **new** session (original untouched) |
 | `ccname` | Print THIS chat's name in the map |
@@ -124,10 +124,11 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `ccstatus --install` | Show THIS chat's name in the Claude Code status line (`◆ <name>`), keeping any existing status line above it; `--uninstall` restores it |
 | `ccretention` | Keep chats for **1 year** after last use instead of Claude Code's 30-day default (after which they're deleted and can't be resumed or searched). Applied automatically on first load — never lowers a bigger value; opt out with `CLAUDIUS_NO_RETENTION=1`, `--uninstall` restores your previous value |
 | `ccplay [game]` | Mini games while something runs — **wordle** (dictionary-checked, with a live keyboard tracker), guess, rps, flip, roll, react, math, hangman, scramble, 8ball; no arg = menu |
-| `ccfind "<text>"` | Search names **and** notes |
+| `ccfind "<text>"` | Search names **and** notes, then **by topic** over the chat/section cards (local; finds un-named chats and mid-chat topics) |
 | `ccimport [-a]` | Name your un-named sessions, with an **AI-suggested name** per chat (Enter accepts · type to override · `-` skips). No flag = multi-select picker (Space ticks); `-a`/`--all` = walk through every one (Esc quits). Skips throwaway sessions. |
 | `ccmonitor` | Table of chats: output tokens, age, working/waiting/inactive |
 | `ccfetch "<name>" [extra]` | Summarise another chat's context — **cached** (instant on repeat); `-r` to refresh; `--file x.md` for any file |
+| `ccfetch "<name>" --about "<topic>"` | Long chats: summarise only the stretch whose section card matches the topic |
 | `ccfetch "<A>" "<B>" …` | Fetch **multiple** chats at once — per-chat use-cached / regenerate, generated in parallel, then offers to open a **new session seeded** with the combined context |
 | `ccfetch` *(no arg)* | Multi-select picker (like `ccimport`): type to filter, **Space** ticks several, **Enter** fetches (Enter on one = single) |
 | `ccask "<question>"` | **Default: searches across *all* your chats** — ranks by relevance (+ recency/importance tie-breakers), answers from the top few, and **cites which chats** it used. **Query expansion is on by default**: Claude first suggests synonyms/abbreviations (*dead-letter queue* → also `dlq`, `redrive`) so it finds chats that used different words — semantic recall, no embeddings (`-E` or `$CCASK_EXPAND=0` to skip). Replies `CANNOT ANSWER:` if your chats don't cover it. Answer is styled on a TTY with a copy-to-clipboard prompt. |
@@ -136,7 +137,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `cccache [--clear [name]]` | List or clear the summary cache (both `ccfetch` and `ccspec`, shown with a TYPE column) |
 | `cccleanup [-y]` | Delete Claudius's own headless `claude -p` runs that got recorded as chats (they clutter history and pollute `ccask -a`). New asks won't be recorded — Claudius runs `claude -p --no-session-persistence`. |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
-| `ccexplain "<name>"` | Plain-terms Done / Pending / Next |
+| `ccexplain "<name>"` | Plain-terms Done / Pending / Next; long chats also get a dated **Timeline** from their section cards |
 | `ccexport "<name>" [out.md]` | Write a context markdown file |
 | `ccadd "<name>" [id] ["notes"]` | Add a row (id defaults to the current session) |
 | `ccnote "<name>" "<notes>"` | Replace an entry's notes |
