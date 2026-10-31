@@ -39,6 +39,7 @@ print -r -- '{"type":"summary","cwd":"'"$WSB"'","usage":{"output_tokens":12000}}
 
 unset CLAUDE_CODE_SESSION_ID   # isolate: don't inherit the real session's id
 export CCASK_EXPAND=0          # deterministic: expansion off by default in tests; -e turns it on explicitly
+export CLAUDIUS_NO_WARM=1      # no background card build in tests (the warm-autostart test turns it on)
 export CCASK_CARDS=0           # deterministic: meaning cards off by default in tests; the card tests turn them on
 _CC_COMPDEF_ARGS=""; compdef(){ _CC_COMPDEF_ARGS+=" $*"; }   # stub accumulates registrations
 source "$CLAUDE_CONFIG_DIR/claudius.zsh"
@@ -227,6 +228,16 @@ out=$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null); okc "warm: reports car
 ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "warm: builds cards without a question" 0 $?
 okc "warm: second run builds nothing new" "(+0 new)" "$(CCASK_CARDS=1 ccask --warm </dev/null 2>/dev/null)"
 okc "warm: cards off is a no-op" "nothing to warm" "$(CCASK_CARDS=0 ccask --warm </dev/null 2>/dev/null)"
+# install-time background build: starts once, finishes, never twice; opt-out honoured
+rm -f "$CDIR/.warm-started" "$CDIR/warm.log" "$CDIR"/*.card.md
+( unset CLAUDIUS_NO_WARM; CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" _cc_warm_autostart now ); okrc "warm-autostart: starts a background build" 0 $?
+for _w in {1..50}; do grep -q "cards ready" "$CDIR/warm.log" 2>/dev/null && break; sleep 0.2; done
+okc "warm-autostart: background build finishes" "cards ready" "$(cat "$CDIR/warm.log" 2>/dev/null)"
+ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "warm-autostart: cards written" 0 $?
+( unset CLAUDIUS_NO_WARM; CCASK_CARDS=1 _cc_warm_autostart now ); okrc "warm-autostart: one-time (marker)" 1 $?
+rm -f "$CDIR/.warm-started"; ( CLAUDIUS_NO_WARM=1 CCASK_CARDS=1 _cc_warm_autostart now ); okrc "warm-autostart: CLAUDIUS_NO_WARM opt-out" 1 $?
+( unset CLAUDIUS_NO_WARM; CCASK_CARDS=1 _cc_warm_autostart ); okrc "warm-autostart: skipped in non-interactive shells" 1 $?
+rm -f "$CDIR"/*.card.md "$CDIR/.warm-started"
 # cards in other commands: titles in lists, topic search in ccfind, timeline/section fetch
 print -r -- '<!-- claudius-card v1 bytes=1 -->
 TITLE: Kubernetes ingress migration for the billing API' >| "$CDIR/$idA.card.md"

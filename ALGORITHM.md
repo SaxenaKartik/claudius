@@ -33,7 +33,7 @@ systems, problems, decisions, fixes, outcome), written once and rebuilt only whe
 A small model (Haiku) reads all cards and picks the chats that are *about* the question. The top 5 are the
 best 4 card picks **plus the #1 keyword match** (so an exact detail you name — a flag, a file, "CSV vs PDF" —
 still wins). Cards only choose chats; the answer is still built from the chats' real turns. `CCASK_CARDS=0`
-turns it off (keyword ranking only). Cards are written on demand by the first `ccask` (before ranking, so that ask is slower but not worse); `ccask --warm` writes them all up front with no question. On the 93-question benchmark this moved the source chat into the top 5
+turns it off (keyword ranking only). Cards are written on demand by the first `ccask` (before ranking, so that ask is slower but not worse); `ccask --warm` writes them all up front with no question, and install (or, for brew, the first interactive shell) runs it once in the background — opt out with `CLAUDIUS_NO_WARM=1`. On the 93-question benchmark this moved the source chat into the top 5
 for 91/93 questions (keyword alone: 63–66).
 
 **4b · Section cards for long chats.** A chat whose compact transcript is too big for one card (> 90K chars)

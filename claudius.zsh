@@ -144,8 +144,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
     -c, --chat [n]  target a specific chat by name (exact -> substring); repeatable. Bare -c (no name)
                     opens a multi-select menu to pick chat(s), then prompts for the question.
     -E, --no-expand skip synonym expansion (faster; $CCASK_EXPAND=0 makes this the default).
-    -w, --warm      write every chat/section card now (no question) so your first real ask is fast;
-                    run once after install. Without it, the first ccask writes them (same result, slower).
+    -w, --warm      write every chat/section card now (no question). Installing Claudius already runs
+                    this once in the background (opt out: CLAUDIUS_NO_WARM=1); run it again any time.
   After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
   chats — no re-search. Esc, q, or Enter on an empty line finishes.
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
@@ -1743,6 +1743,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # meaning ranking runs IN PARALLEL with the keyword pass below (they don't depend on each other)
   local cardtmp= cardpid= sectmp= secpid=
   if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
+    _cc_warm_running && print -u2 -- $'\e[2m(search cards are still being built in the background since install — this ask may be slower; progress: ~/.claude/claudius-cache/warm.log)\e[0m'
     _cc_cards_ensure $files
     cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null & cardpid=$!; }
     if [[ ${CCASK_SECTIONS:-1} != 0 ]]; then
@@ -2648,3 +2649,25 @@ _cc_statusline_autowire() {
   ccstatus --install >/dev/null 2>&1
 }
 _cc_statusline_autowire
+
+# --- search cards built on install: run `ccask --warm` ONCE in the background, so the first real ccask
+# doesn't wait minutes writing a card per chat. Started by install.sh ($1=now) or, for brew installs, on the
+# first INTERACTIVE load. Never blocks the shell; a marker makes it one-time (later asks only refresh new or
+# grown chats). Opt out with CLAUDIUS_NO_WARM=1 (or CCASK_CARDS=0). Returns 0 only if it started a build.
+_cc_warm_autostart() {
+  [[ -n ${CLAUDIUS_NO_WARM-} || ${CCASK_CARDS:-1} == 0 ]] && return 1
+  [[ ${1-} == now || -o interactive ]] || return 1
+  local cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; local cdir="$cfg/claudius-cache"
+  [[ -d "$cfg/projects" && ! -e "$cdir/.warm-started" ]] || return 1
+  command -v claude >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || return 1
+  local -a any=("$cfg"/projects/*/*.jsonl(N[1])); (( ${#any} )) || return 1
+  mkdir -p "$cdir" && : >| "$cdir/.warm-started"
+  CCW_SELF="$_CC_SELF" CCW_DIR="$cdir" nohup zsh -fc 'print $$ >| "$CCW_DIR/warm.pid"; source "$CCW_SELF"; ccask --warm; rm -f "$CCW_DIR/warm.pid"' \
+    >| "$cdir/warm.log" 2>&1 </dev/null &!
+  return 0
+}
+_cc_warm_running() {   # 0 if the background card build is still going
+  local pf="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/warm.pid" pid
+  [[ -s $pf ]] && pid=$(<"$pf") && kill -0 "$pid" 2>/dev/null
+}
+_cc_warm_autostart >/dev/null 2>&1

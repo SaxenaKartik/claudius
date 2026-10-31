@@ -12,6 +12,7 @@
 #    CC_MAP              default: $CLAUDE_CONFIG_DIR/cc_map.md
 #    CLAUDIUS_REPO       default: SaxenaKartik/claudius        (for web bootstrap)
 #    CLAUDIUS_REF        default: main
+#    CLAUDIUS_NO_WARM=1  skip building the search cards in the background after install
 #
 #  Requires: zsh (the helpers are zsh); Claude Code on PATH as `claude`.
 #  Uninstall:  sh install.sh --uninstall
@@ -106,11 +107,15 @@ else
   say "added to $RC: $LINE"
 fi
 
+WARM=""   # build the search cards once, in the background, so the first ccask doesn't wait (opt out: CLAUDIUS_NO_WARM=1)
+command -v zsh >/dev/null 2>&1 && zsh -c "source \"$HELPER\" && _cc_warm_autostart now" >/dev/null 2>&1 && WARM=1
+
 say ""
 say "Claudius installed."
 say "  helper  : $HELPER"
 say "  commands: $CMD_DIR/{$(echo "$CMDS" | tr ' ' ',')}.md   (use /ccadd /ccname /ccrename /ccfetch /ccask /ccspec /ccexplain /ccexport /ccplay /ccmusic in a chat)"
 say "  map     : $MAP"
+[ -n "$WARM" ] && say "  cards   : building search cards for your chats in the background (one-time, one Claude call per chat; log: $CLAUDE_DIR/claudius-cache/warm.log) — opt out: CLAUDIUS_NO_WARM=1"
 say "  chats   : kept 1 year after last use (Claude Code's default is 30 days) — on first load; opt out: CLAUDIUS_NO_RETENTION=1"
 say ""
 say "Reload now:  source \"$RC\"     then run:  claudius  (walkthrough)  ·  cchelp  (all commands)"
