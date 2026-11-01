@@ -63,6 +63,15 @@ query is present:
   the salient-content regex applies — query-independent, and this is the shared **cached** extract
   (`<id>.text.md`, marker `claudius-extract v4`; a bump forces rebuild). Each excerpt is tagged `[turn N of M]` (its position in its chat) and the answer prompt says the LATER turn wins when excerpts disagree — long chats often hold an early decision and the one that replaced it. On the 14 benchmark misses this fixed 5 with 1 regression in 20 checks; a wider second read on CANNOT ANSWER was tried and dropped (fired 5×, fixed 0).
 
+**NAMES, stretch evidence, rare-word turns (Nov 1).** Cards are written from the conversation, so a resource that
+lived mostly in command/tool output could be missing from them. Every chat and section card now ends with a local
+`NAMES:` line — the ~25 most distinctive identifiers in that chat or stretch, read from the raw transcript incl.
+tool output (rarity across chats is cached in `names-df.json`). Every long chat in the top 5 is read from its
+best-matching stretch (local pick over section cards + NAMES, identifier-like question words weigh 3×; an exact
+identifier match overrides the small model's stretch pick). Inside a chat, turns are ranked by rare question words
+(IDF within the chat) instead of a plain count. Full 126-question run: 107 → 111 (9 newly right, 5 newly wrong),
+~8 s slower at the median. `CCASK_NAMES=0` / `CCASK_STRETCH_ALL=0` turn the first two off.
+
 Then **select turns**: split each extract
 into `## USER` / `## ASSISTANT` blocks; score each block by **# of distinct terms** (tiebreak: total
 mentions); drop zero-match blocks — but each matched block **carries its next `CCASK_FOLLOW` (1)
