@@ -1318,7 +1318,10 @@ _cc_claude_spin() {   # run claude -p with a live spinner on stderr ($2=label, d
   local prompt="$1" lbl="${2:-thinking}" extra="${3-}" tmp; tmp=$(mktemp -t ccask 2>/dev/null || printf '/tmp/ccask.%d.md' $$)
   # --strict-mcp-config with no --mcp-config loads ZERO MCP servers: ccask's prompts are pure text (no
   # tools), so skipping MCP startup cuts per-call latency massively when the user has many MCP servers.
-  claude -p --no-session-persistence --strict-mcp-config ${=extra} "$prompt" > "$tmp" 2>/dev/null &
+  # lean call: no tools and a one-line system prompt — these prompts are plain text, so Claude Code's own ~45K-token
+  # system prompt and tool definitions are pure overhead (CCASK_LEAN=0 restores the full default)
+  local -a lean=(); [[ ${CCASK_LEAN:-1} != 0 ]] && lean=(--tools "" --system-prompt "Follow the instructions in the user message exactly. Reply with text only.")
+  claude -p --no-session-persistence --strict-mcp-config "${lean[@]}" ${=extra} "$prompt" > "$tmp" 2>/dev/null &
   local pid=$! t0=$SECONDS i=0 spin='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
   trap 'kill $pid 2>/dev/null' INT
   if [[ -t 2 ]]; then
@@ -1445,7 +1448,7 @@ def build(job):
     cid = os.path.splitext(os.path.basename(path))[0]; cf_ = os.path.join(cdir, cid + ".card.md")
     size = os.path.getsize(path)
     data = open(ex, errors="ignore").read(); body = data[:70000] + ("\n…\n" + data[-20000:] if len(data) > 90000 else data[70000:])
-    r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", model] if model else []), "--no-session-persistence", PROMPT + body],
+    r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", model] if model else []), "--no-session-persistence", *(["--strict-mcp-config", "--tools", "", "--system-prompt", "Follow the instructions in the user message exactly. Reply with text only."] if os.environ.get("CCASK_LEAN", "1") != "0" else []), PROMPT + body],
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode == 0 and r.stdout.strip():
         tmp = cf_ + ".tmp"; open(tmp, "w").write(f"<!-- claudius-card v1 bytes={size} -->\n" + r.stdout.strip() + "\n"); os.replace(tmp, cf_)
@@ -1537,7 +1540,7 @@ for path in sys.argv[1:]:
     json.dump({"bytes": size, "max": MAXC, "sections": out}, open(meta, "w"))
 def build(job):
     card, prompt = job
-    r = subprocess.run([BIN, "-p", *(["--model", model] if model else []), "--no-session-persistence", prompt],
+    r = subprocess.run([BIN, "-p", *(["--model", model] if model else []), "--no-session-persistence", *(["--strict-mcp-config", "--tools", "", "--system-prompt", "Follow the instructions in the user message exactly. Reply with text only."] if os.environ.get("CCASK_LEAN", "1") != "0" else []), prompt],
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode == 0 and r.stdout.strip(): open(card + ".tmp", "w").write(r.stdout.strip() + "\n"); os.replace(card + ".tmp", card)
 with cf.ThreadPoolExecutor(6) as ex: list(ex.map(build, jobs))
@@ -1558,12 +1561,27 @@ for p in sys.argv[1:]:
         t = body.strip()[:700] + (("\nNAMES:" + nm.strip()[:300]) if nm else "")
         if t: items.append((p, t, int(c[-6:-3])))
 if not items: sys.exit(0)
+def prefilter(q, items, keep, recent_ids=()):   # items: [(key, text)] -> the `keep` most question-relevant (+ recent), order kept
+    if keep <= 0 or len(items) <= keep: return items
+    import math
+    stop = set("the and for are was were with what when where which who why how did does this that from into about after before then than have has had not but can could would should our your their its".split())
+    w = lambda t: set(x.rstrip("s") for x in re.findall(r"[a-z0-9_]+", t.lower()) if len(x) > 2 and x not in stop)
+    qs = w(q); W = [w(t) for _, t in items]; N = len(items)
+    def has(x, ws): return x in ws or (len(x) >= 10 and any(x in y for y in ws if len(y) > len(x)))
+    df = {x: sum(has(x, ws) for ws in W) for x in qs}
+    sc = [sum(math.log(1 + N / df[x]) for x in qs if df[x] and has(x, ws)) for ws in W]
+    top = set(sorted(range(N), key=lambda i: -sc[i])[:keep]) | {i for i, (k, _) in enumerate(items) if k in recent_ids}
+    return [it for i, it in enumerate(items) if i in top]
+keep_s = int(os.environ.get("CCASK_SECTION_PICK_MAX", "60"))
+if keep_s > 0 and len(items) > keep_s:
+    kept = prefilter(os.environ["CCR_Q"], [((p, n), t) for p, t, n in items], keep_s)
+    items = [(p, t, n) for (p, n), t in kept]
 cat = "\n\n".join(f"[S{i+1}]\n{t}" for i, (_, t, _n) in enumerate(items))
 prompt = (f"Below are {len(items)} cards, each describing one SECTION of a long past AI-assistant chat.\n\n" + cat +
           f"\n\nA developer asks:\nQUESTION: {os.environ['CCR_Q']}\nWhich sections most likely contain the answer? Judge by MEANING. "
           "Return ONLY the 10 best section labels, best first, comma-separated (e.g. S12, S3, ...).")
 m = os.environ.get("CCR_MODEL", "")
-r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
+r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", *(["--strict-mcp-config", "--tools", "", "--system-prompt", "Follow the instructions in the user message exactly. Reply with text only."] if os.environ.get("CCASK_LEAN", "1") != "0" else []), prompt],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL)
 seen = []
 for lab in re.findall(r"S(\d+)", r.stdout):
@@ -1716,6 +1734,19 @@ for p in paths:
     except Exception: continue
     if txt: cards.append((p, txt))
 if not cards: sys.exit(0)
+def prefilter(q, items, keep, recent_ids=()):   # items: [(key, text)] -> the `keep` most question-relevant (+ recent), order kept
+    if keep <= 0 or len(items) <= keep: return items
+    import math
+    stop = set("the and for are was were with what when where which who why how did does this that from into about after before then than have has had not but can could would should our your their its".split())
+    w = lambda t: set(x.rstrip("s") for x in re.findall(r"[a-z0-9_]+", t.lower()) if len(x) > 2 and x not in stop)
+    qs = w(q); W = [w(t) for _, t in items]; N = len(items)
+    def has(x, ws): return x in ws or (len(x) >= 10 and any(x in y for y in ws if len(y) > len(x)))
+    df = {x: sum(has(x, ws) for ws in W) for x in qs}
+    sc = [sum(math.log(1 + N / df[x]) for x in qs if df[x] and has(x, ws)) for ws in W]
+    top = set(sorted(range(N), key=lambda i: -sc[i])[:keep]) | {i for i, (k, _) in enumerate(items) if k in recent_ids}
+    return [it for i, it in enumerate(items) if i in top]
+recent = [p for p in sorted(paths, key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0, reverse=True)[:10]]
+cards = prefilter(os.environ["CCR_Q"], cards, int(os.environ.get("CCASK_PICK_MAX", "40")), set(recent))
 cat = "\n\n".join(f"[C{i+1}]\n{t}" for i, (_, t) in enumerate(cards))
 # card list FIRST, question LAST: the long, unchanging card list is then a reusable (cacheable) prefix
 prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats.\n\n" + cat +
@@ -1723,7 +1754,7 @@ prompt = (f"Below are cards describing {len(cards)} past AI-assistant chats.\n\n
           "Which chats most likely contain the answer? Judge by MEANING, not shared words. "
           "Return ONLY the 10 best card labels, best first, comma-separated (e.g. C12, C3, ...).")
 m = os.environ.get("CCR_MODEL", "")
-r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", prompt],
+r = subprocess.run([os.environ.get("CCASK_CLAUDE_BIN", "claude"), "-p", *(["--model", m] if m else []), "--no-session-persistence", *(["--strict-mcp-config", "--tools", "", "--system-prompt", "Follow the instructions in the user message exactly. Reply with text only."] if os.environ.get("CCASK_LEAN", "1") != "0" else []), prompt],
                    capture_output=True, text=True, stdin=subprocess.DEVNULL)
 seen = []
 for lab in re.findall(r"C(\d+)", r.stdout):
