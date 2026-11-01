@@ -270,6 +270,13 @@ CCASK_CARDS=1 ccfind "ingress billing" >/dev/null 2>&1; okrc "cards: ccfind topi
 okc "cards: section pick by topic" "2	quokka budget review" "$(_cc_section_pick $idA "quokka budget")"
 okc "cards: ccexplain prints the timeline" "Timeline" "$(ccexplain "Alpha" </dev/null 2>/dev/null)"
 okc "cards: ccexplain gives the model the section cards" "TIMELINE (section cards" "$(ccexplain "Alpha" </dev/null 2>/dev/null)"
+out=$(cccard "Alpha" </dev/null); okc "cccard: prints the chat card title" "Kubernetes ingress migration" "$out"
+okc "cccard: lists section cards with dates" "zebra rollout canary failures (2026-01-01" "$out"; okn "cccard: hides the card header comment" "claudius-card v1" "$out"
+okn "cccard: section bodies only with -a" "canary failed on zebra hosts" "$out"
+okc "cccard -a: prints full section cards" "canary failed on zebra hosts" "$(cccard -a "Alpha" </dev/null)"
+cccard "no-such-chat-xyz" </dev/null >/dev/null 2>&1; okrc "cccard: unknown name -> 1" 1 $?
+okc "cccard: no card yet says how to build" "ccask --warm" "$(cccard "Beta" </dev/null)"
+okc "cchelp lists cccard" "cccard" "$(cchelp)"
 out=$(ccfetch "Alpha" --about "zzqqnomatch" </dev/null 2>&1); okc "cards: ccfetch --about no match" "No section of 'Alpha' matches" "$out"
 rm -f "$CDIR/$idA".card.md "$CDIR/$idA".sec00[12].md
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }

@@ -179,6 +179,11 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   Prints a short status to stdout (not cached). With no name, opens the picker.
   Long chats: the section cards (one per dated topic stretch) are given to the model so the explanation
   covers the WHOLE chat, and are printed after it as a Timeline.';;
+    cccard)    print -r -- 'cccard — show the search cards Claudius keeps for a chat (local, no model call).
+  Usage: cccard [-a] "<name>"
+  Prints the chat card (title, topic, systems, decisions, outcome, NAMES line), then one line per
+  section card for long chats (dated topic stretches). -a prints every section card in full.
+  With no name, opens the picker. No card yet? Run ccask --warm (or ask any question) to build it.';;
     ccexport)  print -r -- 'ccexport — write a Markdown context export for handoff.
   Usage: ccexport "<name>" [output.md]
   Default path ./<slug>.context.md. Sections: Overview, What happened, Decisions,
@@ -278,6 +283,7 @@ cchelp() {
   printf '  \e[36m%-33s\e[0m %s\n' 'cccleanup [-y]'                'remove Claudius'\''s own claude -p runs recorded as chats'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccspec "<name>" [out.md]'      'write a spec file (goal/decisions/tasks) for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexplain "<name>" [extra]'    'plain-terms explanation: Done / Pending / Next'
+  printf '  \e[36m%-33s\e[0m %s\n' 'cccard [-a] "<name>"'          'show the search card(s) Claudius keeps for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccexport "<name>" [out.md]'    'write a context markdown file for a chat'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccnote "<name>" "<notes>"'     'replace an entry'\''s notes'
   printf '  \e[36m%-33s\e[0m %s\n' 'ccadd "<name>" [id] ["notes"]' 'add a row (id defaults to $CLAUDE_CODE_SESSION_ID)'
@@ -2423,6 +2429,35 @@ ccexplain() {
   fi
 }
 
+cccard() {   # print the chat card (+ section cards) Claudius keeps for a chat — local files only
+  [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help cccard; return 0; }
+  local all=; [[ "${1-}" == -a || "${1-}" == --all ]] && { all=1; shift; }
+  local q
+  if [[ -n "${1-}" ]]; then q="$1"
+  else _cc_pick_name; case $? in 2) echo 'usage: cccard [-a] "<name>"'; return 2;; 1) return 1;; esac; q=$_CC_SEL_NAME; fi
+  local name id match_id match_name cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache"
+  while IFS=$'\t' read -r name id; do [[ "${name:l}" == "${q:l}" ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+  if [[ -z $match_id ]]; then
+    while IFS=$'\t' read -r name id; do [[ "${name:l}" == *"${q:l}"* ]] && { match_id=$id; match_name=$name; break; }; done < <(_cc_rows)
+  fi
+  [[ -z $match_id ]] && { echo "No session matching '$q'. Known:"; _cc_plain; return 1; }
+  local card="$cdir/$match_id.card.md"; local -a secs=("$cdir/$match_id".sec[0-9][0-9][0-9].md(N))
+  if [[ ! -s $card && ${#secs} -eq 0 ]]; then
+    echo "No card yet for '$match_name' — run ccask --warm (or ask any question) to build it."; return 1
+  fi
+  print -r -- $'\e[1m'"$match_name"$'\e[0m \e[2m('"$match_id"$')\e[0m'
+  if [[ -s $card ]]; then print; grep -v '^<!-- claudius-card' "$card" | sed -e '/./,$!d'
+  else print -r -- $'\e[2m(no chat card yet)\e[0m'; fi
+  (( ${#secs} )) || return 0
+  print; print -r -- $'\e[1mSections\e[0m \e[2m('"${#secs}"$' dated topic stretches · ccfetch "'"$match_name"$'" --about "<topic>" fetches one)\e[0m'
+  local c n
+  for c in $secs; do
+    n=${${c%.md}##*.sec}
+    if [[ -n $all ]]; then print; printf '\e[36m§%d\e[0m ' "$((10#$n))"; sed -e 's/^SECTION:[[:space:]]*//' "$c" | sed -e '/./,$!d'
+    else printf '  \e[2m%2d.\e[0m %s\n' "$((10#$n))" "$(sed -n '1s/^SECTION:[[:space:]]*//p' "$c")"; fi
+  done
+}
+
 ccexport() {
   [[ "${1-}" == -h || "${1-}" == --help ]] && { _cc_help ccexport; return 0; }
   local q out
@@ -2726,7 +2761,7 @@ if (( $+functions[compdef] )) && { [[ ${(t)_comps-} == association* ]] || [[ ${f
     compadd -U -a matched
   }
   _cc_no_complete() { }                      # no name arg -> suppress default file completion
-  compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask
+  compdef _cc_complete_names ccresume ccbranch ccremove ccrename ccnote ccfetch ccspec ccfind ccexplain ccexport ccask cccard
   compdef _cc_no_complete ccadd ccimport ccmonitor ccname ccplay ccmusic ccretention claudius cchelp cccache cccleanup
 fi
 

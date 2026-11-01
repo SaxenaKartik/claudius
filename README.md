@@ -138,6 +138,7 @@ Run **`claudius`** for a getting-started walkthrough, or **`cchelp`** for the fu
 | `cccleanup [-y]` | Delete Claudius's own headless `claude -p` runs that got recorded as chats (they clutter history and pollute `ccask -a`). New asks won't be recorded — Claudius runs `claude -p --no-session-persistence`. |
 | `ccspec "<name>" [out.md]` | Generate a spec file (goal/decisions/tasks/refs) — writes it **and** prints it; **cached** (instant on repeat); `-r` to refresh |
 | `ccexplain "<name>"` | Plain-terms Done / Pending / Next; long chats also get a dated **Timeline** from their section cards |
+| `cccard [-a] "<name>"` | Show the search cards Claudius keeps for a chat: the chat card (topic, systems, decisions, outcome, NAMES line) and its dated section cards (`-a` prints them in full). Local, no model call |
 | `ccexport "<name>" [out.md]` | Write a context markdown file |
 | `ccadd "<name>" [id] ["notes"]` | Add a row (id defaults to the current session) |
 | `ccnote "<name>" "<notes>"` | Replace an entry's notes |
