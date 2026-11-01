@@ -2449,7 +2449,7 @@ cccard() {   # print the chat card (+ section cards) Claudius keeps for a chat �
   if [[ -s $card ]]; then print; grep -v '^<!-- claudius-card' "$card" | sed -e '/./,$!d'
   else print -r -- $'\e[2m(no chat card yet)\e[0m'; fi
   (( ${#secs} )) || return 0
-  print; print -r -- $'\e[1mSections\e[0m \e[2m('"${#secs}"$' dated topic stretches · ccfetch "'"$match_name"$'" --about "<topic>" fetches one)\e[0m'
+  print; print -r -- $'\e[1mSections\e[0m \e[2m('"${#secs}"$' dated topic stretch'"${${#secs:#1}:+es}"$' · ccfetch "'"$match_name"$'" --about "<topic>" fetches one)\e[0m'
   local c n
   for c in $secs; do
     n=${${c%.md}##*.sec}
