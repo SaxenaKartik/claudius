@@ -157,6 +157,7 @@ is unreadable, recency = 0.
 | `CCASK_SHARE` | 34,24,18,13,11 | % of the excerpt budget reserved for the #1…#5 chat (rest is round-robin) |
 | `CCASK_SHORT_OPENER` | 8 | an opener with fewer words than this borrows the assistant's first substantial reply |
 | `CCASK_CARDS` | 1 | meaning ranking via cached chat cards (0 = keyword only) |
+| `CCASK_ANSWER_MODEL` | sonnet | model that writes the answer (empty = your claude default); benchmark: Sonnet 107 vs Opus 108 of 126 from identical evidence, at half the answer cost |
 | `CCASK_CARD_MODEL` / `CCASK_CARD_RANK_MODEL` | sonnet / haiku | model that writes cards / picks chats from them |
 | `CCASK_SECTIONS` / `CCASK_SECTION_MIN` / `CCASK_SECTION_MAX` | 1 / 90000 / 120000 | section cards on; chats above MIN chars of transcript get them; stretch size cap |
 | `CCASK_EXCLUDE` | — | space/comma-separated 8-char session-id prefixes to leave out of the corpus (e.g. a chat that holds an eval's answer key) |

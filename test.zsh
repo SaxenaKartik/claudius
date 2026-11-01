@@ -204,8 +204,9 @@ out=$(ccask "q" "nope-nope" </dev/null 2>&1); okc "ccask unknown chat" "No sessi
 out=$(ccask -a "preview" </dev/null 2>&1);       okc "ccask -a searches all chats" "MULTIPLE past coding chats" "$out"
 okn "ccask -a no var-decl leak" "base=" "$out"   # guard the zsh 'bare local of a set var prints it' gotcha
 out=$(ccask -a "zznomatchword" </dev/null 2>&1); okc "ccask -a no match" "none of your saved chats" "$out"
-okc "ccask: CCASK_ANSWER_MODEL sets the answer model" "--model sonnet" "$(CCASK_ANSWER_MODEL=sonnet ccask -a "preview" </dev/null 2>&1)"
-okn "ccask: no --model flag by default" "--model sonnet" "$(ccask -a "preview" </dev/null 2>&1)"
+okc "ccask: answers with sonnet by default" "--model sonnet" "$(ccask -a "preview" </dev/null 2>&1)"
+okc "ccask: CCASK_ANSWER_MODEL overrides the answer model" "--model opus" "$(CCASK_ANSWER_MODEL=opus ccask -a "preview" </dev/null 2>&1)"
+okn "ccask: CCASK_ANSWER_MODEL= uses the claude default" "--model" "$(CCASK_ANSWER_MODEL= ccask -a "preview" </dev/null 2>&1 | grep -v "model haiku")"
 okc "ccask: excerpts tagged with turn position" "[turn " "$(ccask -x "preview" </dev/null 2>/dev/null)"
 okc "ccask: prompt says the later turn wins" "the LATER turn is the current answer" "$(ccask -a "preview" </dev/null 2>&1)"
 # meaning cards: a card ranker pick comes first, the #1 keyword match is still kept, cards are cached
