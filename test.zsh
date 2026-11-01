@@ -273,6 +273,7 @@ okc "cards: ccexplain gives the model the section cards" "TIMELINE (section card
 out=$(cccard "Alpha" </dev/null); okc "cccard: prints the chat card title" "Kubernetes ingress migration" "$out"
 okc "cccard: lists section cards with dates" "zebra rollout canary failures (2026-01-01" "$out"; okn "cccard: hides the card header comment" "claudius-card v1" "$out"
 okn "cccard: section bodies only with -a" "canary failed on zebra hosts" "$out"
+okc "cccard: plural for 2 sections" "2 dated topic stretches" "$out"
 okc "cccard -a: prints full section cards" "canary failed on zebra hosts" "$(cccard -a "Alpha" </dev/null)"
 cccard "no-such-chat-xyz" </dev/null >/dev/null 2>&1; okrc "cccard: unknown name -> 1" 1 $?
 okc "cccard: no card yet says how to build" "ccask --warm" "$(cccard "Beta" </dev/null)"
