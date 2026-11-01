@@ -147,6 +147,8 @@ _cc_help() {   # detailed per-command help shown by `<cmd> -h|--help`
   $CCASK_ANSWER_MODEL picks the model that writes the answer (default: sonnet; empty = your claude default).
     -w, --warm      write every chat/section card now (no question). Installing Claudius already runs
                     this once in the background (opt out: CLAUDIUS_NO_WARM=1); run it again any time.
+  ccask never waits for cards: missing or outgrown ones are written in the background after the answer
+  (CCASK_CARDS_WAIT=1 builds them first, the old behaviour).
   After each answer (in a terminal) a '↳ follow-up' prompt lets you keep asking about the SAME fetched
   chats — no re-search. Esc, q, or Enter on an empty line finishes.
     -s, --summary   (targeted) answer from the cached handoff summaries instead (fast/cheap, but lossy).
@@ -1455,6 +1457,15 @@ PY
 # --- section cards: long and medium chats get one card per topic stretch, so a topic that only lives in the
 # MIDDLE of a chat (which its chat card can't see) can still be found. A chat is split where you came back after
 # 3h+ or it was compacted; stretches are kept between ~30K and ~200K characters of conversation.
+_cc_cards_missing() {   # args: transcript paths -> prints how many lack a chat card or have outgrown it (same rule as _cc_cards_ensure)
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" f cf n cur c=0
+  for f in "$@"; do
+    cf="$cdir/${${f:t}:r}.card.md"; cur=0; local -a st=(); zstat -A st +size "$f" 2>/dev/null && cur=${st[1]}
+    n=; [[ -s $cf ]] && n=$(head -1 "$cf" | sed -n 's/.*bytes=\([0-9]*\).*/\1/p')
+    if [[ -z $n ]] || (( cur - n > (n / 5 > 51200 ? n / 5 : 51200) )); then (( c++ )); fi
+  done
+  print -r -- $c
+}
 _cc_sections_ensure() {   # args: transcript paths -> build/refresh section cards for chats too big for one card
   local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache"; command -v python3 >/dev/null 2>&1 || return 0
   local -a cand=(); local f ex
@@ -1814,12 +1825,24 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
   # meaning ranking runs IN PARALLEL with the keyword pass below (they don't depend on each other)
   local cardtmp= cardpid= sectmp= secpid=
   if [[ ${CCASK_CARDS:-1} != 0 ]] && command -v claude >/dev/null 2>&1; then
-    _cc_warm_running && print -u2 -- $'\e[2m(search cards are still being built in the background since install — this ask may be slower; progress: ~/.claude/claudius-cache/warm.log)\e[0m'
-    _cc_cards_ensure $files
+    if [[ ${CCASK_CARDS_WAIT:-0} == 1 ]]; then
+      _cc_cards_ensure $files            # opt-in: build missing cards now, then rank (the old behaviour)
+    else
+      # never make you wait: answer from keywords + the cards that already exist, and write the missing or
+      # grown ones in the background (sections and NAMES too) so the next ask has them
+      local miss; miss=$(_cc_cards_missing $files)
+      local done_f="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/.warm-done"
+      local done_age=999999; [[ -e $done_f ]] && done_age=$(( $(date +%s) - $(_cc_mtime "$done_f") ))
+      (( miss > 0 || done_age > 21600 )) && _cc_warm_bg   # also refresh grown chats' sections/NAMES, at most every 6 h
+      if (( miss > 0 )); then
+        print -u2 -- $'\e[2m('"$miss"$' chat(s) have no up-to-date search card yet — answering from keywords and the cards that exist; writing the rest in the background)\e[0m'
+      elif _cc_warm_running; then
+        print -u2 -- $'\e[2m(search cards are being refreshed in the background — not waiting for them)\e[0m'
+      fi
+    fi
     cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null; : >| "$cardtmp.done"; } &! cardpid=1; }
     if [[ ${CCASK_SECTIONS:-1} != 0 ]]; then
-      _cc_sections_ensure $files
-      _cc_names_ensure $files
+      [[ ${CCASK_CARDS_WAIT:-0} == 1 ]] && { _cc_sections_ensure $files; _cc_names_ensure $files; }
       sectmp=$(mktemp "${TMPDIR:-/tmp}/cc_secrank.XXXXXX") && { { _cc_section_rank "$q" $files >| "$sectmp" 2>/dev/null; : >| "$sectmp.done"; } &! secpid=1; }
     fi
   fi
@@ -2747,7 +2770,12 @@ _cc_warm_autostart() {
   command -v claude >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || return 1
   local -a any=("$cfg"/projects/*/*.jsonl(N[1])); (( ${#any} )) || return 1
   mkdir -p "$cdir" && : >| "$cdir/.warm-started"
-  CCW_SELF="$_CC_SELF" CCW_DIR="$cdir" nohup zsh -fc 'print $$ >| "$CCW_DIR/warm.pid"; source "$CCW_SELF"; ccask --warm; rm -f "$CCW_DIR/warm.pid"' \
+  _cc_warm_bg
+}
+_cc_warm_bg() {   # start `ccask --warm` detached unless one is already running; never blocks the caller
+  local cdir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache"; mkdir -p "$cdir"
+  _cc_warm_running && return 0
+  CCW_SELF="$_CC_SELF" CCW_DIR="$cdir" nohup zsh -fc 'print $$ >| "$CCW_DIR/warm.pid"; source "$CCW_SELF"; ccask --warm; rm -f "$CCW_DIR/warm.pid"; : >| "$CCW_DIR/.warm-done"' \
     >| "$cdir/warm.log" 2>&1 </dev/null &!
   return 0
 }

@@ -40,6 +40,7 @@ print -r -- '{"type":"summary","cwd":"'"$WSB"'","usage":{"output_tokens":12000}}
 unset CLAUDE_CODE_SESSION_ID   # isolate: don't inherit the real session's id
 export CCASK_EXPAND=0          # deterministic: expansion off by default in tests; -e turns it on explicitly
 export CLAUDIUS_NO_WARM=1      # no background card build in tests (the warm-autostart test turns it on)
+export CCASK_CARDS_WAIT=1      # card tests build synchronously; the never-wait default is tested separately
 export CCASK_CARDS=0           # deterministic: meaning cards off by default in tests; the card tests turn them on
 _CC_COMPDEF_ARGS=""; compdef(){ _CC_COMPDEF_ARGS+=" $*"; }   # stub accumulates registrations
 source "$CLAUDE_CONFIG_DIR/claudius.zsh"
@@ -236,6 +237,16 @@ _ptycmd="source '$CLAUDE_CONFIG_DIR/claudius.zsh'; ccask -x preview; exit"
 if script -q /dev/null true </dev/null >/dev/null 2>&1; then out=$(CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" script -q /dev/null zsh -ic "$_ptycmd" </dev/null 2>&1)
 else out=$(CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" script -qc "zsh -ic \"$_ptycmd\"" /dev/null </dev/null 2>&1); fi
 okn "ccask: no job-control notices in a terminal" "_cc_card_rank" "$out"
+# default: ccask never waits for cards — answers now, writes missing cards in the background
+rm -f "$CDIR"/*.card.md "$CDIR/.warm-done" "$CDIR/warm.pid"
+out=$( ( unset CCASK_CARDS_WAIT; CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" ccask -a "preview" </dev/null 2>&1 ) )
+okc "never-wait: says it isn't waiting for cards" "writing the rest in the background" "$out"
+okc "never-wait: still answers" "MULTIPLE past coding chats" "$out"
+for _w in {1..50}; do [[ -e "$CDIR/.warm-done" ]] && break; sleep 0.2; done
+ls "$CDIR"/*.card.md >/dev/null 2>&1; okrc "never-wait: background build wrote the cards" 0 $?
+out=$( ( unset CCASK_CARDS_WAIT; CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" ccask -a "preview" </dev/null 2>&1 ) )
+okn "never-wait: no note once cards exist" "no up-to-date search card" "$out"
+rm -f "$CDIR"/*.card.md "$CDIR/.warm-done"
 # install-time background build: starts once, finishes, never twice; opt-out honoured
 rm -f "$CDIR/.warm-started" "$CDIR/warm.log" "$CDIR"/*.card.md
 ( unset CLAUDIUS_NO_WARM; CCASK_CARDS=1 CCASK_CLAUDE_BIN="$STUBC" _cc_warm_autostart now ); okrc "warm-autostart: starts a background build" 0 $?
