@@ -72,6 +72,13 @@ identifier match overrides the small model's stretch pick). Inside a chat, turns
 (IDF within the chat) instead of a plain count. Full 126-question run: 107 → 111 (9 newly right, 5 newly wrong),
 ~8 s slower at the median. `CCASK_NAMES=0` / `CCASK_STRETCH_ALL=0` turn the first two off.
 
+**Lean calls + card pre-filter (Nov 1).** ccask's model calls are plain text in, text out, so they run without
+Claude Code's tools, MCP servers or long system prompt (`--strict-mcp-config --tools "" --system-prompt …`) —
+that setup was ~45–60K tokens of every call. Before the two card picks, a local keyword score keeps the 40 most
+relevant chat cards (plus the 10 most recently used chats) and the 60 most relevant section cards, instead of
+sending all ~300. Benchmark: picks $0.158 → $0.010, answer $0.209 → $0.144, end to end 109/126 vs 111 (within the
+±5 run-to-run swing), p50 65 s → 43 s. `CCASK_LEAN=0`, `CCASK_PICK_MAX=0`, `CCASK_SECTION_PICK_MAX=0` turn them off.
+
 Then **select turns**: split each extract
 into `## USER` / `## ASSISTANT` blocks; score each block by **# of distinct terms** (tiebreak: total
 mentions); drop zero-match blocks — but each matched block **carries its next `CCASK_FOLLOW` (1)
