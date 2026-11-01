@@ -1538,7 +1538,8 @@ cdir = os.environ["CCR_CDIR"]; items = []
 for p in sys.argv[1:]:
     cid = os.path.splitext(os.path.basename(p))[0]
     for c in sorted(glob.glob(os.path.join(cdir, glob.escape(cid) + ".sec[0-9][0-9][0-9].md"))):
-        t = open(c, errors="ignore").read().strip()[:700]
+        body, _, nm = open(c, errors="ignore").read().partition("\nNAMES:")
+        t = body.strip()[:700] + (("\nNAMES:" + nm.strip()[:300]) if nm else "")
         if t: items.append((p, t, int(c[-6:-3])))
 if not items: sys.exit(0)
 cat = "\n\n".join(f"[S{i+1}]\n{t}" for i, (_, t, _n) in enumerate(items))
@@ -1568,6 +1569,60 @@ with open(src, errors="ignore") as f, open(out, "w") as o:
         if i >= s["first"]: o.write(line)
 PY
   [[ -s $out ]] && print -r -- "$out"
+}
+
+_cc_names_ensure() {   # args: transcript paths -> append a local "NAMES:" line to every chat/section card that lacks one
+  # Cards are written from the conversation, so a resource that mostly lived in commands and tool OUTPUT (a Lambda,
+  # an alarm, a table, a number) can be missing from them. This adds the stretch's most distinctive identifiers,
+  # read from the raw transcript incl. tool output — no model call. Rare-across-chats names rank first.
+  [[ ${CCASK_NAMES:-1} == 0 ]] && return 0; command -v python3 >/dev/null 2>&1 || return 0
+  CCN_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache" python3 - "$@" <<'PY' 2>/dev/null
+import json, math, os, re, sys
+from collections import Counter
+d = os.environ["CCN_DIR"]; paths = sys.argv[1:]
+def cards_of(p):
+    cid = os.path.splitext(os.path.basename(p))[0]; out = []
+    if os.path.exists(f"{d}/{cid}.card.md"): out.append((f"{d}/{cid}.card.md", None))
+    mp = f"{d}/{cid}.sections.json"
+    if os.path.exists(mp):
+        try:
+            for x in json.load(open(mp))["sections"]:
+                c = f"{d}/{cid}.sec{x['n']:03d}.md"
+                if os.path.exists(c): out.append((c, (x["first"], x["last"])))
+        except Exception: pass
+    return out
+todo = {p: [(c, r) for c, r in cards_of(p) if "\nNAMES:" not in open(c, errors="ignore").read()] for p in paths}
+if not any(todo.values()): raise SystemExit
+ID = re.compile(r"\b(?:[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]{2,}|[A-Z]{2,}-\d{3,}|[a-z][a-z0-9]+(?:-[a-z0-9]+){2,}|\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)? ?(?:ms|MB|GB|KB|TPS|min)\b)")
+NOISE = re.compile(r"^(?:mcp__\w+|claude-[\w.-]+|t20\d\d-.*|[0-9a-f]{6,}|.*[0-9a-f]{8}.*|tool_use_id|input_tokens|output_tokens|cache_\w+|parent_uuid|session_id|is_error|toolUseResult|stop_reason|server_tool_use|ephemeral_\w+|service_tier)$", re.I)
+def ids(text):
+    return Counter(t for t in ID.findall(text) if 4 <= len(t) <= 60 and not NOISE.match(t))
+import time
+dfp = f"{d}/names-df.json"; lines_of = {}
+def load(p):
+    try: lines_of[p] = open(p, errors="ignore").read().split("\n")
+    except Exception: pass
+try:                                 # document frequency across chats (rare names are the distinctive ones), cached
+    cache = json.load(open(dfp)); assert time.time() - cache["t"] < 7 * 86400
+    df, N = Counter(cache["df"]), cache["n"]
+    for p, cs in todo.items():
+        if cs: load(p)
+except Exception:
+    df = Counter()
+    for p in paths:
+        load(p)
+        if p in lines_of: df.update(set(ids("\n".join(lines_of[p]))))
+    N = max(len(lines_of), 1)
+    json.dump({"t": time.time(), "n": N, "df": {k: v for k, v in df.items() if v > 1}}, open(dfp, "w"))
+for p, cs in todo.items():
+    L = lines_of.get(p)
+    if not L: continue
+    for c, rng in cs:
+        tf = ids("\n".join(L if rng is None else L[rng[0]:rng[1] + 1]))
+        top = sorted(((n * math.log(1 + N / df[t]), t) for t, n in tf.items() if df[t] <= max(2, N // 5)), reverse=True)[:25]
+        if top:
+            with open(c, "a") as f: f.write("\nNAMES: " + ", ".join(t for _, t in top) + "\n")
+PY
 }
 
 _cc_card_titles() {   # -> "id<TAB>title" for every chat card (local, no model call)
@@ -1612,12 +1667,18 @@ _cc_section_pick() {   # $1=id $2=topic -> "N<TAB>title" of the section card tha
   command -v python3 >/dev/null 2>&1 || return 0
   CCP_Q="$2" python3 - "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/$1".sec[0-9][0-9][0-9].md(N) <<'PY' 2>/dev/null
 import math, os, re, sys
-w = lambda t: set(x.rstrip("s") for x in re.findall(r"[a-z0-9]+", t.lower()) if len(x) > 2)
-q = w(os.environ["CCP_Q"]); cs = [(int(p[-6:-3]), open(p, errors="ignore").read()) for p in sys.argv[1:]]
+STOP = set("the and for are was were with what when where which who why how did does this that from into about after before then than have has had not but can could would should our your their its fix fixed".split())
+w = lambda t: set(x.rstrip("s") for x in re.findall(r"[a-z0-9]+", t.lower()) if len(x) > 2 and x not in STOP)
+raw_q = os.environ["CCP_Q"]; q = w(raw_q); cs = [(int(p[-6:-3]), open(p, errors="ignore").read()) for p in sys.argv[1:]]
+# identifier-like question words (CamelCase, snake_case, digits, or long) pin a stretch far better than everyday words
+strong = {t.lower().rstrip("s") for t in re.findall(r"[A-Za-z0-9_]+", raw_q) if re.search(r"[a-z][A-Z]|_|\d", t) or len(t) >= 12}
+wt = lambda x: 3.0 if x in strong else 1.0
 if not q or not cs: raise SystemExit
-df = {x: sum(x in w(t) for _, t in cs) for x in q}
+def has(x, ws): return x in ws or (len(x) >= 10 and any(x in y for y in ws if len(y) > len(x)))
+W = [w(t) for _, t in cs]
+df = {x: sum(has(x, ws) for ws in W) for x in q}
 head = lambda t: w(t.splitlines()[0] if t else "")      # the section's title line counts extra
-sc = [(sum(math.log(1 + len(cs) / df[x]) for x in q if df[x] and x in w(t)) * (1 + 0.5 * len(q & head(t))), -n, t) for n, t in cs]
+sc = [(sum(wt(x) * math.log(1 + len(cs) / df[x]) for x in q if df[x] and has(x, ws)) * (1 + 0.25 * len(q & head(t))), -n, t) for (n, t), ws in zip(cs, W)]
 s, n, t = max(sc); n = -n                                # ties -> the earlier section
 if s > 0: print(f"{n}\t" + re.sub(r"^SECTION:\s*", "", t.splitlines()[0]))
 PY
@@ -1632,7 +1693,9 @@ import os, re, subprocess, sys
 paths = sys.argv[1:]; cdir = os.environ["CCR_CDIR"]; cards = []
 for p in paths:
     cf = os.path.join(cdir, os.path.splitext(os.path.basename(p))[0] + ".card.md")
-    try: txt = open(cf, errors="ignore").read().split("\n", 1)[1].strip()[:1300]
+    try:
+        raw = open(cf, errors="ignore").read().split("\n", 1)[1]; body, _, nm = raw.partition("\nNAMES:")
+        txt = body.strip()[:1300] + (("\nNAMES:" + nm.strip()[:300]) if nm else "")
     except Exception: continue
     if txt: cards.append((p, txt))
 if not cards: sys.exit(0)
@@ -1697,6 +1760,7 @@ _cc_ask_warm() {   # ccask --warm: write every missing/stale chat + section card
   print -u2 -- $'\e[2mWarming cards for '"${#files}"$' chat(s) — one-time; later asks only refresh new or grown chats.\e[0m'
   _cc_cards_ensure $files
   [[ ${CCASK_SECTIONS:-1} != 0 ]] && _cc_sections_ensure $files
+  _cc_names_ensure $files
   local -a c1=("$cdir"/*.card.md(N)) s1=("$cdir"/*.sec[0-9]*.md(N))
   print -r -- "cards ready: ${#c1} chat card(s) (+$(( ${#c1} - ${#c0} )) new), ${#s1} section card(s) (+$(( ${#s1} - ${#s0} )) new)."
 }
@@ -1749,6 +1813,7 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     cardtmp=$(mktemp "${TMPDIR:-/tmp}/cc_cardrank.XXXXXX") && { { _cc_card_rank "$q" $files >| "$cardtmp" 2>/dev/null; : >| "$cardtmp.done"; } &! cardpid=1; }
     if [[ ${CCASK_SECTIONS:-1} != 0 ]]; then
       _cc_sections_ensure $files
+      _cc_names_ensure $files
       sectmp=$(mktemp "${TMPDIR:-/tmp}/cc_secrank.XXXXXX") && { { _cc_section_rank "$q" $files >| "$sectmp" 2>/dev/null; : >| "$sectmp.done"; } &! secpid=1; }
     fi
   fi
@@ -1900,6 +1965,12 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     if [[ ${CCASK_SECTION_EVIDENCE:-1} != 0 && -n ${sectop[1]-} && $topfiles[j] == ${sectop[1]} ]]; then
       sn=${secof[$topfiles[j]]-}; local slice=; [[ -n $sn ]] && slice=$(_cc_section_slice "$topids[j]" "$topfiles[j]" "$sn")
       [[ -n $slice ]] && tf=$(_cc_transcript_text "$topids[j].s$(printf %03d $sn)" "$slice" "$q ${(j: :)et}")
+    fi
+    # any other long chat: read its best-matching stretch too (local pick over section cards + NAMES, no model call)
+    if [[ -z $tf && ${CCASK_STRETCH_ALL:-1} != 0 && -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claudius-cache/$topids[j].sections.json" ]]; then
+      local lp=; lp=$(_cc_section_pick "$topids[j]" "$q ${(j: :)et}"); sn=${lp%%$'\t'*}
+      local slice2=; [[ -n $sn ]] && slice2=$(_cc_section_slice "$topids[j]" "$topfiles[j]" "$sn")
+      [[ -n $slice2 ]] && tf=$(_cc_transcript_text "$topids[j].s$(printf %03d $sn)" "$slice2" "$q ${(j: :)et}")
     fi
     [[ -z $tf ]] && tf=$(_cc_transcript_text "$topids[j]" "$topfiles[j]" "$q ${(j: :)et}")   # query-aware build: keep result middles matching the question/synonyms
     pairs+=("$labels[j]"$'\t'"$tf")
