@@ -1235,6 +1235,11 @@ follow = int(__import__("os").environ.get("CCASK_FOLLOW", "1"))
 whole = int(__import__("os").environ.get("CCASK_WHOLE_MAX", "15000"))
 keys = list(by_chat.keys())
 units = {}
+import math
+for k in keys:                       # within a chat, a RARE question word ("burner") says far more than "deploy"
+    blocks = by_chat[k]; T = len(blocks) or 1
+    tdf = {t: sum(1 for b in blocks if t in b[3].lower()) for t in terms}
+    by_chat[k] = [(sum(math.log(1 + T / tdf[t]) for t in terms if tdf[t] and t in b[3].lower()) if b[0] else 0, b[1], b[2], b[3]) for b in blocks]
 for ci, k in enumerate(keys):
     blocks = by_chat[k]
     if ci == 0 and blocks and sum(len(b[3]) for b in blocks) <= whole:
@@ -1680,7 +1685,8 @@ df = {x: sum(has(x, ws) for ws in W) for x in q}
 head = lambda t: w(t.splitlines()[0] if t else "")      # the section's title line counts extra
 sc = [(sum(wt(x) * math.log(1 + len(cs) / df[x]) for x in q if df[x] and has(x, ws)) * (1 + 0.25 * len(q & head(t))), -n, t) for (n, t), ws in zip(cs, W)]
 s, n, t = max(sc); n = -n                                # ties -> the earlier section
-if s > 0: print(f"{n}\t" + re.sub(r"^SECTION:\s*", "", t.splitlines()[0]))
+k = sum(1 for x in strong if x in q and has(x, w(t)))   # identifier-like question words this stretch matched
+if s > 0: print(f"{n}\t" + re.sub(r"^SECTION:\s*", "", t.splitlines()[0]) + f"\t{k}")
 PY
 }
 
@@ -1963,7 +1969,10 @@ _cc_ask_all() {   # cross-chat ask: rank ALL sessions by relevance, answer from 
     tf=; local sn=
     # the chat chosen by its SECTION card: take evidence from that stretch only, not from the whole (giant) chat
     if [[ ${CCASK_SECTION_EVIDENCE:-1} != 0 && -n ${sectop[1]-} && $topfiles[j] == ${sectop[1]} ]]; then
-      sn=${secof[$topfiles[j]]-}; local slice=; [[ -n $sn ]] && slice=$(_cc_section_slice "$topids[j]" "$topfiles[j]" "$sn")
+      sn=${secof[$topfiles[j]]-}
+      local lp0=; lp0=$(_cc_section_pick "$topids[j]" "$q ${(j: :)et}")
+      [[ -n $lp0 && ${lp0##*$'\t'} != 0 && ${lp0%%$'\t'*} != "$sn" ]] && sn=${lp0%%$'\t'*}   # an exact identifier beats the model's guess
+      local slice=; [[ -n $sn ]] && slice=$(_cc_section_slice "$topids[j]" "$topfiles[j]" "$sn")
       [[ -n $slice ]] && tf=$(_cc_transcript_text "$topids[j].s$(printf %03d $sn)" "$slice" "$q ${(j: :)et}")
     fi
     # any other long chat: read its best-matching stretch too (local pick over section cards + NAMES, no model call)
@@ -2229,7 +2238,7 @@ ccfetch() {
     local pick sec stitle sl
     pick=$(_cc_section_pick "$match_id" "$about")
     [[ -z $pick ]] && { echo "No section of '$match_name' matches '$about' (it may be too short to have sections — ccexplain shows its timeline)."; return 1; }
-    sec=${pick%%$'\t'*}; stitle=${pick#*$'\t'}
+    sec=${pick%%$'\t'*}; stitle=${${pick#*$'\t'}%$'\t'*}
     sl=$(_cc_section_slice "$match_id" "${tf[1]}" "$sec") || { echo "could not read section $sec."; return 1; }
     print -u2 -- $'\e[2mSection '"$sec"$': '"$stitle"$'\e[0m'
     _cc_claude_spin "Produce a concise handoff summary of this STRETCH of a longer conversation (about: $about): goal, key decisions/answers, current state, open next steps, and important file/CR/ticket references. Use short bullet points. ${extra}"$'\n\n'"$(_cc_slice "${${sl:t}%.jsonl}" "$sl")"
