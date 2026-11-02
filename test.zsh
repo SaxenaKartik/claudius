@@ -278,6 +278,16 @@ okc "cccard -a: prints full section cards" "canary failed on zebra hosts" "$(ccc
 cccard "no-such-chat-xyz" </dev/null >/dev/null 2>&1; okrc "cccard: unknown name -> 1" 1 $?
 okc "cccard: no card yet says how to build" "ccask --warm" "$(cccard "Beta" </dev/null)"
 okc "cchelp lists cccard" "cccard" "$(cchelp)"
+# answer renderer: wrap with hanging indent, dim citations, green opening answer, code blocks
+_md=$'**Answer here.** Lead text (from "Alpha", turn 3).\n\n- **Point** one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen\n\n```\nls -la\n```'
+_r=$(COLUMNS=60 _cc_md_ansi "$_md")
+okc "render: opening answer is green bold" $'\e[1;32mAnswer here.' "$_r"
+okc "render: citation is dimmed" $'\e[2m(from "Alpha", turn 3)' "$_r"
+okc "render: bullet marker" "•" "$_r"
+okc "render: wrapped bullet keeps a hanging indent" $'\n    ' "$_r"
+okc "render: code block kept" "ls -la" "$_r"
+_mx=0; for _l in "${(@f)$(print -r -- "$_r" | sed $'s/\e\\[[0-9;]*m//g')}"; do (( ${#_l} > _mx )) && _mx=${#_l}; done
+(( _mx <= 60 )); okrc "render: lines fit the terminal width" 0 $?
 out=$(ccfetch "Alpha" --about "zzqqnomatch" </dev/null 2>&1); okc "cards: ccfetch --about no match" "No section of 'Alpha' matches" "$out"
 rm -f "$CDIR/$idA".card.md "$CDIR/$idA".sec00[12].md
 claude(){ print -r -- "CLAUDE $* @ $PWD"; }

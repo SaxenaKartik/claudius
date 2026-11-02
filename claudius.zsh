@@ -1376,7 +1376,52 @@ _cc_clipcmd() {   # echo a clipboard command if one exists on this system, else 
   elif command -v xsel    >/dev/null 2>&1; then print -r -- 'xsel -b'
   else return 1; fi
 }
-_cc_md_ansi() {   # lightweight markdown -> ANSI renderer (headers, bold, code, bullets)
+_cc_md_ansi() {   # markdown -> ANSI for the terminal: word-wrapped to a readable width with hanging indents,
+  # bold / `code` / headers styled, citations "(from …)" and "(turn N)" dimmed. Falls back to a simple perl pass.
+  local w=${COLUMNS:-$(tput cols 2>/dev/null)}; [[ $w == <-> ]] || w=100
+  if command -v python3 >/dev/null 2>&1; then
+    CCM_W=$w python3 -c '
+import os, re, sys, textwrap
+md = sys.stdin.read(); W = max(40, min(int(os.environ.get("CCM_W", "100")) - 4, 110))
+B, D, R, C, H, Q = "\033[1m", "\033[2m", "\033[0m", "\033[38;5;214m", "\033[1;36m", "\033[36m"
+G, FIRST = "\033[1;32m", []
+def style(line, st):
+    out, i = [((G if st.get("g") else B) if st["b"] else "") + (C if st["c"] else "")], 0   # carry bold/code across a wrapped line
+    while i < len(line):
+        if line.startswith("**", i):
+            st["b"] = not st["b"]; i += 2
+            if st["b"] and not FIRST: FIRST.append(1); st["g"] = True   # the opening direct answer: green
+            elif not st["b"]: st["g"] = False
+            out.append(((G if st.get("g") else B) if st["b"] else R + (C if st["c"] else ""))); continue
+        if line[i] == "`": st["c"] = not st["c"]; i += 1; out.append(C if st["c"] else R + (B if st["b"] else "")); continue
+        out.append(line[i]); i += 1
+    s = "".join(out) + (R if st["b"] or st["c"] else "")
+    pre = (B if st["b"] else "") + (C if st["c"] else "")
+    s = re.sub(r"(\((?:from |turns? )[^()]*\))", D + r"\1" + R + pre, s)
+    return s
+def emit(text, first, rest):
+    st = {"b": False, "c": False}
+    lines = textwrap.wrap(text, W - len(rest), break_long_words=False, break_on_hyphens=False) or [""]
+    for k, ln in enumerate(lines):
+        print((first if k == 0 else rest) + style(ln, st))
+print()
+code = False
+for raw in md.split("\n"):
+    if raw.strip().startswith("```"):
+        code = not code; continue
+    if code: print("    " + C + raw + R); continue
+    if not raw.strip(): print(); continue
+    m = re.match(r"^(#{1,6})\s+(.*)", raw)
+    if m: print("  " + (H if len(m.group(1)) <= 2 else B) + m.group(2).replace("**", "") + R); continue
+    m = re.match(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)", raw)
+    if m:
+        ind = "  " + " " * len(m.group(1)); num = re.match(r"^\s*(\d+[.)])", raw)
+        mark = (num.group(1) if num else "•")
+        emit(m.group(2), ind + Q + mark + R + " ", ind + " " * (len(mark) + 1)); continue
+    emit(raw.strip(), "  ", "  ")
+print()
+' <<< "$1" && return
+  fi
   print -r -- "$1" | perl -0777 -pe '
     s{```[a-zA-Z0-9_-]*\n(.*?)\n?```}{ my $c=$1; $c=~s/^/    /mg; "\e[38;5;79m$c\e[0m" }ges;
     s/^(#{1,2})\s+(.*)$/\e[1;36m$2\e[0m/mg;
